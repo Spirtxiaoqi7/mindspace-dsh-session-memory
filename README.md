@@ -19,6 +19,46 @@ personalization memory. It keeps continuity and user control in the same place:
 This is a community plugin and is not an official DeepSeek project. The repository
 artwork is supplied by the project owner and is used only to identify this repository.
 
+## 0.2.0 update and contribution
+
+Version 0.2.0 turns the first editable-memory prototype into a governed,
+session-scoped personalization layer for DeepSeek Harness:
+
+- the public compaction-summary override is replaced by a 300-character user profile
+  that separates confirmed facts from clearly labelled AI observations;
+- preferences and assistant requirements are consolidated into at most three
+  categorized cards per section instead of growing as disconnected fragments;
+- corrections replace conflicting information while preserving stable card ids;
+- automatic extraction proposes a complete next state and an atom-by-atom
+  handled/skipped ledger, so partial model output is rejected atomically;
+- append, merge, replace, and skip activity records expose source message sequences,
+  before/after values, reasons, and timestamps;
+- V1 session events remain replayable and migrate into the V2 document shape;
+- relationship missions and roleplay presets remain independently scoped to each
+  conversation.
+
+The contribution is deliberately tree-out: one installable dual-face DSH bundle owns
+the Host service, event projection, prompt/tool integration, extraction hook, Typert
+descriptor, Remote, and settings UI. It does not replace DSH compaction semantics or
+require an upstream source patch, making the memory-governance layer independently
+installable, auditable, and removable.
+
+### Confirmed/observed profile and categorized preferences
+
+<p align="center">
+  <img src="assets/memory-center-v2-profile-preferences.png" alt="V2 profile and categorized preference cards" width="780">
+</p>
+
+### Session role preset and visible memory audit
+
+<p align="center">
+  <img src="assets/memory-center-v2-role-audit.png" alt="V2 role preset and memory activity audit" width="780">
+</p>
+
+The V2 acceptance run passed 10 automated tests, build and package checks, real model
+write/merge/replace flows, cross-session isolation, and persistence after restarting
+the default Web profile.
+
 ## Install
 
 Prebuilt tarball or npm package (no install-time build permission):
