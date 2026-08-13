@@ -8,6 +8,8 @@
 - Added atomic complete-state extraction with a handled/skipped atom ledger.
 - Added visible append/merge/replace/skip activity including evidence, before/after values, and reasons.
 - Added V1 event migration while keeping legacy history replayable.
+- Repaired duplicate fallback categories during replay so legacy documents cannot block later writes.
+- Added a dedicated assistant-identity action for names, nicknames, and relationship-specific titles.
 
 ## 0.1.0 - 2026-08-14
 

@@ -34,6 +34,9 @@ session-scoped personalization layer for DeepSeek Harness:
 - append, merge, replace, and skip activity records expose source message sequences,
   before/after values, reasons, and timestamps;
 - V1 session events remain replayable and migrate into the V2 document shape;
+- repeated legacy fallback categories are repaired during replay instead of locking all later writes;
+- assistant names, nicknames, self-designations, and relationship-specific titles have a dedicated
+  identity action and are never routed into the user's profile or preferences;
 - relationship missions and roleplay presets remain independently scoped to each
   conversation.
 

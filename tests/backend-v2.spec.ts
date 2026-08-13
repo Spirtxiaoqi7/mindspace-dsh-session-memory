@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest'
-import { emptySessionMemory, foldSessionMemory, migrateLegacyDocument } from '../src/memory/fold.ts'
-import { mergeExtraction, parseExtraction } from '../src/memory/extraction.ts'
+import {
+  emptySessionMemory,
+  foldSessionMemory,
+  migrateLegacyDocument,
+  normalizeSessionMemoryDocument,
+} from '../src/memory/fold.ts'
+import { mergeAssistantIdentity, mergeExtraction, parseExtraction } from '../src/memory/extraction.ts'
 import type { LegacySessionMemoryDocumentV1 } from '../src/memory/domain.ts'
 import type { ExtractionProposal } from '../src/memory/extraction.ts'
 import type { SessionMemoryDocument } from '../src/memory/types.ts'
@@ -28,6 +33,15 @@ function currentWithPreference(text: string): SessionMemoryDocument {
 }
 
 describe('V2 complete-state extraction', () => {
+  it('adds an assistant nickname without silently enabling a disabled preset', () => {
+    const preset = mergeAssistantIdentity(
+      { enabled: false, text: '你是萧镜鸢。' },
+      '官方外号是粉色小鲸鱼。',
+    )
+    expect(preset).toEqual({ enabled: false, text: '你是萧镜鸢。\n官方外号是粉色小鲸鱼。' })
+    expect(mergeAssistantIdentity(preset, '官方外号是粉色小鲸鱼。')).toEqual(preset)
+  })
+
   it('rejects a partial result without a complete atom coverage ledger', () => {
     expect(parseExtraction(JSON.stringify({
       userProfile: { confirmed: '', inferred: '' },
@@ -116,6 +130,36 @@ describe('V1 replay migration', () => {
     expect(migrated.userProfile).toMatchObject({ confirmed: '25岁男性', inferred: '', evidenceSeqs: [2] })
     expect(migrated.preferences[0]).toMatchObject({ id: 'p1', category: '综合偏好' })
     expect(migrated).not.toHaveProperty('summaryOverride')
+  })
+
+  it('merges repeated legacy fallback categories so the migrated document remains writable', () => {
+    const migrated = migrateLegacyDocument({
+      ...legacy,
+      preferences: [
+        { id: 'p1', text: '喜欢水果', source: 'user', evidenceSeqs: [1] },
+        { id: 'p2', text: '喜欢无糖茶', source: 'user', evidenceSeqs: [4] },
+      ],
+    })
+    expect(migrated.preferences).toHaveLength(1)
+    expect(migrated.preferences[0]).toMatchObject({ id: 'p1', category: '综合偏好' })
+    expect(migrated.preferences[0]?.text).toContain('喜欢水果')
+    expect(migrated.preferences[0]?.text).toContain('无糖茶')
+    expect(migrated.preferences[0]?.evidenceSeqs).toEqual([1, 4])
+  })
+
+  it('repairs duplicate categories persisted by an early V2 preview before the next write', () => {
+    const repaired = normalizeSessionMemoryDocument({
+      ...emptySessionMemory(),
+      revision: 9,
+      preferences: [
+        { id: 'first', category: '综合偏好', text: '喜欢水果', source: 'user', evidenceSeqs: [1] },
+        { id: 'second', category: ' 综合偏好 ', text: '喜欢无糖茶', source: 'extracted', evidenceSeqs: [2] },
+      ],
+    })
+    expect(repaired.preferences).toHaveLength(1)
+    expect(repaired.preferences[0]).toMatchObject({ id: 'first', category: '综合偏好', source: 'user' })
+    expect(repaired.preferences[0]?.text).toBe('喜欢水果；喜欢无糖茶')
+    expect(repaired.preferences[0]?.evidenceSeqs).toEqual([1, 2])
   })
 
   it('replays a legacy change event into a V2 public view', () => {

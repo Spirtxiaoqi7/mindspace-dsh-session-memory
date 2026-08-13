@@ -19,6 +19,7 @@ import {
   DEFAULT_RELATIONSHIP_MISSION,
   extractTurn,
   MAX_MEMORY_CARDS,
+  mergeAssistantIdentity,
   mergeExtraction,
 } from './extraction.ts'
 import { renderSessionMemory } from './render.ts'
@@ -116,7 +117,10 @@ const MEMORY_TOOL_GUIDANCE = [
   'Taxonomy is strict: userProfile is only identity, demographics, location, work, skills, life state, and durable',
   'traits; preferences is what the user likes, dislikes, chooses, or habitually uses; assistantInstructions is how',
   'the assistant must answer or act. Never put answer-style rules in preferences, and never put likes/dislikes in',
-  'userProfile. One message may require several update_session_memory calls so every section is updated.',
+  'userProfile. The assistant persona, name, nickname, self-designation, relationship-specific title, and how the user',
+  'addresses the assistant belong in relationship or roleplayPreset, never userProfile or preferences. Use',
+  'remember_assistant_identity for an additive assistant nickname or identity note. One message may require several',
+  'update_session_memory calls so every section is updated.',
   'Never store an inference as confirmed or infer sensitive data. These tools affect only the current conversation.',
 ].join(' ')
 
@@ -427,13 +431,15 @@ export class SessionMemoryService extends TypertRemoteService {
       description: 'Persist explicit personalization now. Match item cards by category; exact item ids are optional. '
         + 'Merge related details and replace conflicts instead of creating sentence-shaped duplicate cards. '
         + 'Use userProfile only for identity/location/work/skills/life state; preferences for likes/dislikes/choices; '
-        + 'assistantInstructions for rules governing assistant answers and behavior.',
+        + 'assistantInstructions for rules governing assistant answers and behavior. Assistant names, nicknames, '
+        + 'self-designations, and relationship-specific titles belong in relationship/roleplay memory; use '
+        + 'remember_assistant_identity for an additive identity note and never put it in userProfile or preferences.',
       parameters: {
         action: {
           type: 'string', required: true,
           enum: [
             'set_user_profile', 'upsert_item', 'remove_item', 'set_relationship', 'clear_relationship',
-            'set_roleplay_preset', 'clear_roleplay_preset',
+            'remember_assistant_identity', 'set_roleplay_preset', 'clear_roleplay_preset',
           ],
         },
         section: {
@@ -441,7 +447,10 @@ export class SessionMemoryService extends TypertRemoteService {
           description: 'preferences = user likes/dislikes/choices; assistantInstructions = rules for AI replies/actions.',
         },
         category: { type: 'string', description: 'Stable category used to merge a card without needing its item id.' },
-        text: { type: 'string', description: 'Complete consolidated card or roleplay preset text.' },
+        text: {
+          type: 'string',
+          description: 'Complete consolidated card/preset text, or one additive assistant identity note for remember_assistant_identity.',
+        },
         item_id: { type: 'string', description: 'Optional exact card id for editing or removal.' },
         confirmed: {
           type: 'string',
@@ -525,6 +534,11 @@ export class SessionMemoryService extends TypertRemoteService {
           })
         } else if (args.action === 'clear_relationship') {
           Object.assign(request, { relationship: null })
+        } else if (args.action === 'remember_assistant_identity') {
+          if (args.text === undefined || args.text.trim().length === 0) throw new Error('text is required')
+          Object.assign(request, {
+            roleplayPreset: mergeAssistantIdentity(current.roleplayPreset, args.text, args.enabled),
+          })
         } else if (args.action === 'set_roleplay_preset') {
           if (args.text === undefined || args.text.trim().length === 0) throw new Error('text is required')
           Object.assign(request, { roleplayPreset: { enabled: args.enabled ?? true, text: args.text } })

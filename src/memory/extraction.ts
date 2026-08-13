@@ -29,7 +29,10 @@ export const EXTRACTION_SYSTEM = [
   'For “not X but Y” corrections, remove X instead of preserving “does not use X” unless the user separately states',
   'that avoiding X is itself a durable preference.',
   'Preserve every unaffected current fact and card. relationship and roleplayPreset are the complete resulting object',
-  'or null. Judge only user text: assistant refusal does not cancel user input. Never invent sensitive facts. The',
+  'or null. An assistant name, nickname, self-designation, relationship-specific title, or how the user addresses the',
+  'assistant belongs in relationship or roleplayPreset, never userProfile or preferences. Preserve existing preset',
+  'content when adding an alias. Judge only user text: assistant refusal does not cancel user input. Never invent',
+  'sensitive facts. The',
   'response is rejected atomically if incomplete or invalid. Also return atoms, one row for EVERY distinct claim in',
   'the newest user message: {text,disposition:"handled"|"skipped",section,reason}; handled requires a target section',
   'and skipped requires a concrete reason. This coverage ledger prevents partial writes.',
@@ -57,6 +60,18 @@ export interface ExtractionProposal {
   relationship: SessionRelationship | null
   roleplayPreset: SessionRoleplayPreset | null
   atoms: ExtractionAtom[]
+}
+
+/** Add an assistant identity note without silently changing the user's preset switch. */
+export function mergeAssistantIdentity(
+  current: SessionRoleplayPreset | null,
+  identity: string,
+  enabled?: boolean,
+): SessionRoleplayPreset {
+  const note = identity.trim()
+  const existing = current?.text.trim() ?? ''
+  const text = existing.includes(note) ? existing : [existing, note].filter(Boolean).join('\n')
+  return { enabled: enabled ?? current?.enabled ?? true, text }
 }
 
 function clean(value: unknown): string | undefined {
