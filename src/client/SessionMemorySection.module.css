@@ -1,0 +1,20 @@
+.section { display: flex; flex-direction: column; gap: 14px; max-width: 720px; color: var(--dsw-alias-label-primary); }
+.section header h2, .card h3 { margin: 0; font-weight: 500; }
+.section header h2 { font-size: 18px; line-height: 26px; }
+.section header p, .card p { margin: 4px 0 0; color: var(--dsw-alias-label-tertiary); font-size: 13px; line-height: 20px; }
+.sessionSelect, .card label { display: flex; flex-direction: column; gap: 6px; font-size: 13px; }
+.sessionSelect select, .card input, .card textarea { box-sizing: border-box; width: 100%; border: 1px solid var(--dsw-alias-border-l2); border-radius: 8px; background: var(--dsw-alias-bg-base); color: var(--dsw-alias-label-primary); padding: 8px 10px; font: inherit; }
+.card { display: flex; flex-direction: column; gap: 10px; padding: 14px; border: 1px solid var(--dsw-alias-border-l2); border-radius: 12px; }
+.card h3 { font-size: 15px; line-height: 22px; }
+.summaryPreview { padding: 10px 12px; border-radius: 8px; background: var(--dsw-alias-bg-secondary); }
+.summaryPreview span { color: var(--dsw-alias-label-tertiary); font-size: 12px; }
+.summaryPreview pre { margin: 6px 0 0; white-space: pre-wrap; word-break: break-word; color: var(--dsw-alias-label-primary); font: inherit; font-size: 13px; line-height: 20px; }
+.cardTitle { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
+.switch { flex-direction: row !important; align-items: center; white-space: nowrap; }
+.switch input { width: auto; margin: 0; }
+.itemRow { display: grid; grid-template-columns: 1fr auto; gap: 8px; }
+.card button, .footer button { min-height: 32px; padding: 0 12px; border: 1px solid var(--dsw-alias-border-l2); border-radius: 16px; background: transparent; color: var(--dsw-alias-label-primary); cursor: pointer; }
+.add { align-self: flex-start; }
+.footer { display: flex; align-items: center; justify-content: flex-end; gap: 8px; padding-bottom: 8px; }
+.footer span { margin-right: auto; color: var(--dsw-alias-label-tertiary); font-size: 12px; }
+.footer .primary { border-color: transparent; background: var(--dsw-alias-button-primary-fill); color: var(--dsw-alias-label-primary-foreground); }

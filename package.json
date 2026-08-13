@@ -1,0 +1,90 @@
+{
+  "name": "mindspace-dsh-session-memory",
+  "version": "0.1.0",
+  "description": "Editable, session-isolated personalization memory for DeepSeek Harness",
+  "type": "module",
+  "license": "MIT",
+  "author": "Spirtxiaoqi7",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Spirtxiaoqi7/mindspace-dsh-session-memory.git"
+  },
+  "homepage": "https://github.com/Spirtxiaoqi7/mindspace-dsh-session-memory#readme",
+  "bugs": "https://github.com/Spirtxiaoqi7/mindspace-dsh-session-memory/issues",
+  "keywords": [
+    "deepseek-harness",
+    "dsh-plugin",
+    "memory",
+    "agent-memory",
+    "session-memory",
+    "personalization",
+    "roleplay"
+  ],
+  "main": "lib/index.js",
+  "exports": {
+    ".": "./lib/index.js",
+    "./memory": "./lib/memory.js",
+    "./client": "./lib/client.js",
+    "./typert": "./lib/typert.js",
+    "./remote": "./lib/remote.js",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "lib",
+    "assets/repository-logo.png",
+    "cordis.patch.yml",
+    "README.md",
+    "README.zh-CN.md",
+    "CHANGELOG.md",
+    "LICENSE"
+  ],
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "inject": [
+        "@deepseek-ai/dsh-client-runtime",
+        "@deepseek-ai/dsh-client-locale",
+        "@deepseek-ai/dsh-client-ui-settings"
+      ],
+      "platform": "web"
+    }
+  },
+  "scripts": {
+    "build": "node scripts/rescope-generated.mjs && tsdown && node scripts/normalize-build.mjs",
+    "test": "vitest run",
+    "check": "pnpm run build && pnpm run test && pnpm pack --pack-destination dist"
+  },
+  "dependencies": {
+    "@deepseek-ai/schemastery": "^3.18.1",
+    "zod": "^4.4.3"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/dsh-compaction": "*",
+    "@deepseek-ai/dsh-llm": "*",
+    "@deepseek-ai/dsh-session": "*",
+    "@deepseek-ai/dsh-tools": "*",
+    "@deepseek-ai/dsh-typert-protocol": "*"
+  },
+  "peerDependenciesMeta": {
+    "@deepseek-ai/dsh-compaction": { "optional": true },
+    "@deepseek-ai/dsh-llm": { "optional": true },
+    "@deepseek-ai/dsh-session": { "optional": true },
+    "@deepseek-ai/dsh-tools": { "optional": true },
+    "@deepseek-ai/dsh-typert-protocol": { "optional": true }
+  },
+  "devDependencies": {
+    "@types/node": "^22.20.0",
+    "@types/react": "^18.3.28",
+    "lightningcss": "^1.32.0",
+    "react": "^18.3.1",
+    "tsdown": "^0.22.2",
+    "typescript": "^6.0.3",
+    "vitest": "^4.1.8"
+  },
+  "engines": {
+    "node": "^22.19.0 || >=24.0.0"
+  },
+  "packageManager": "pnpm@11.7.0"
+}
