@@ -7,13 +7,13 @@
 An installable DeepSeek Harness community plugin for editable, session-isolated
 personalization memory. It keeps continuity and user control in the same place:
 
-- direct preview of the current DSH compaction summary, with an optional user override;
-- editable preferences, user facts, and instructions for the assistant;
+- a roughly 300-character profile separating confirmed user facts from AI observations, while DSH compaction stays internal;
+- editable preferences and assistant instructions consolidated into at most three categorized cards each;
 - a relationship identity and a purpose for each conversation;
 - an optional roleplay preset isolated to one session;
 - model-facing `get_session_memory` and `update_session_memory` tools;
 - conservative automatic extraction from explicit user statements;
-- conflict replacement by stable item id, while the DSH event log retains the audit trail;
+- category-based conflict replacement with stable card ids and a visible append/merge/replace/skip audit trail;
 - a one-time, optional role/purpose/style question when a new session has no personalization.
 
 This is a community plugin and is not an official DeepSeek project. The repository
@@ -24,7 +24,7 @@ artwork is supplied by the project owner and is used only to identify this repos
 Prebuilt tarball or npm package (no install-time build permission):
 
 ```sh
-dsh plugin --profile web add ./mindspace-dsh-session-memory-0.1.0.tgz
+dsh plugin --profile web add ./mindspace-dsh-session-memory-0.2.0.tgz
 dsh --profile web --dump-config
 dsh web
 ```
@@ -52,8 +52,10 @@ dsh plugin --profile web remove mindspace-dsh-session-memory
 Memory changes are appended to the selected DSH session event log. The UI reads and
 replaces a whole versioned document with optimistic revision checks. Automatic
 extraction is enabled by default and may make one auxiliary model request after a
-completed root-agent turn. It only proposes durable information explicitly stated by
-the user; inferred sensitive facts are rejected by policy.
+completed root-agent turn. A proposal must contain the complete next state plus a
+handled/skipped ledger for every extracted atom; invalid or partial output is rejected
+atomically. Confirmed facts and cautious observations remain separate, and inferred
+sensitive facts are rejected by policy.
 
 Disable automatic extraction in a later profile patch if you want tool/manual writes
 only:
@@ -63,7 +65,8 @@ only:
   name: mindspace-dsh-session-memory
   config:
     maxTextBytes: 4096
-    maxItemsPerSection: 64
+    maxItemsPerSection: 3
+    maxProfileCharacters: 300
     autoExtract: false
     extractionMaxTokens: 1024
 ```

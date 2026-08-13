@@ -1,63 +1,92 @@
 /** Pure replay fold for per-session personalization memory. */
 
 import type { SessionEvent } from '@deepseek-ai/dsh-session'
-import { isCompactCheckpointSource } from '@deepseek-ai/dsh-compaction/checkpoint'
-import { isReplacementSurfaceEvent } from '@deepseek-ai/dsh-session/surface'
-import type { SessionMemoryDocument, SessionMemorySummary, SessionMemoryView } from './types.ts'
+import type { LegacySessionMemoryDocumentV1 } from './domain.ts'
+import type { SessionMemoryDocument, SessionMemoryItem, SessionMemoryView } from './types.ts'
 
-/** Internal state retains the compaction summary behind a user override. */
 export interface SessionMemoryFoldState {
   document: SessionMemoryDocument
-  compacted: SessionMemorySummary | null
+  memoryActivity: SessionMemoryView['memoryActivity']
 }
 
 /** Empty state before a session has personalization edits. */
 export function emptySessionMemory(): SessionMemoryDocument {
   return {
-    version: 1, revision: 0, summaryOverride: null, preferences: [], userFacts: [],
-    assistantInstructions: [], relationship: null, roleplayPreset: null, updatedAt: 0,
+    version: 2,
+    revision: 0,
+    userProfile: { confirmed: '', inferred: '', evidenceSeqs: [] },
+    preferences: [],
+    assistantInstructions: [],
+    relationship: null,
+    roleplayPreset: null,
+    updatedAt: 0,
   }
 }
 
-function normalizeDocument(document: SessionMemoryDocument): SessionMemoryDocument {
-  // Sessions written by the first release predate roleplayPreset. Replay them
-  // as disabled instead of invalidating durable logs.
-  return { ...document, roleplayPreset: document.roleplayPreset ?? null }
+function legacyCard(item: LegacySessionMemoryDocumentV1['preferences'][number], category: string): SessionMemoryItem {
+  return { ...item, category, evidenceSeqs: [...item.evidenceSeqs] }
+}
+
+function migrateLegacyCards(
+  items: LegacySessionMemoryDocumentV1['preferences'],
+  category: string,
+): SessionMemoryItem[] {
+  const result = items.slice(0, 3).map(item => legacyCard(item, category))
+  for (const overflow of items.slice(3)) {
+    const target = result[2]
+    if (target === undefined) break
+    result[2] = {
+      ...target,
+      text: `${target.text}；${overflow.text}`,
+      evidenceSeqs: [...new Set([...target.evidenceSeqs, ...overflow.evidenceSeqs])],
+    }
+  }
+  return result
+}
+
+/** Lossless-enough migration of the editable v0.1 state. Compaction overrides are deliberately retired. */
+export function migrateLegacyDocument(document: LegacySessionMemoryDocumentV1): SessionMemoryDocument {
+  const facts = document.userFacts.map(item => item.text.trim()).filter(Boolean)
+  const factEvidence = document.userFacts.flatMap(item => item.evidenceSeqs)
+  return {
+    version: 2,
+    revision: document.revision,
+    userProfile: {
+      confirmed: facts.join('；'),
+      inferred: '',
+      evidenceSeqs: [...new Set(factEvidence)],
+    },
+    preferences: migrateLegacyCards(document.preferences, '综合偏好'),
+    assistantInstructions: migrateLegacyCards(document.assistantInstructions, '交互要求'),
+    relationship: document.relationship,
+    roleplayPreset: document.roleplayPreset ?? null,
+    updatedAt: document.updatedAt,
+  }
 }
 
 /** Initial replay state. */
 export function emptySessionMemoryFoldState(): SessionMemoryFoldState {
-  return { document: emptySessionMemory(), compacted: null }
+  return { document: emptySessionMemory(), memoryActivity: [] }
 }
 
 /** Apply one relevant event without scanning prior history. */
 export function applySessionMemoryEvent(state: SessionMemoryFoldState, event: SessionEvent): SessionMemoryFoldState {
-  if (event.type === 'session-memory/change') return { ...state, document: normalizeDocument(event.data.document) }
-  if (event.type === 'compaction/summary') {
-    const text = event.data.summary.filter(block => block.type === 'text').map(block => block.text).join('\n').trim()
-    if (text.length === 0) return state
-    return { ...state, compacted: { content: event.data.summary, text, source: 'compaction', sourceSeq: event.seq } }
+  if (event.type !== 'session-memory/change') return state
+  if (event.data.version === 1) {
+    return { ...state, document: migrateLegacyDocument(event.data.document as LegacySessionMemoryDocumentV1) }
   }
-  if (event.type !== 'user/message' || !isReplacementSurfaceEvent(event) || !isCompactCheckpointSource(event.data.source)) return state
-  const text = event.data.content.filter(block => block.type === 'text').map(block => block.text).join('\n').trim()
-  if (text.length === 0) return state
-  return { ...state, compacted: { content: event.data.content, text, source: 'compaction', sourceSeq: event.seq } }
+  return {
+    document: event.data.document,
+    memoryActivity: [...state.memoryActivity, ...event.data.changes],
+  }
 }
 
 /** Public view of one internal fold state. */
 export function sessionMemoryView(state: SessionMemoryFoldState): SessionMemoryView {
-  const summary = state.document.summaryOverride === null
-    ? state.compacted
-    : {
-      content: [{ type: 'text' as const, text: state.document.summaryOverride }],
-      text: state.document.summaryOverride,
-      source: 'user' as const,
-      sourceSeq: state.document.revision,
-    }
-  return { document: state.document, compactionSummary: state.compacted, summary }
+  return { document: state.document, memoryActivity: state.memoryActivity }
 }
 
-/** Fold one log into its latest editable document and DSH compaction summary. */
+/** Fold one log into its latest editable document and activity ledger. */
 export function foldSessionMemory(events: readonly SessionEvent[]): SessionMemoryView {
   let state = emptySessionMemoryFoldState()
   for (const event of events) state = applySessionMemoryEvent(state, event)

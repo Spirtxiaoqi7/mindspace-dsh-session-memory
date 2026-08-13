@@ -2,6 +2,7 @@ import { readFile } from 'node:fs/promises'
 import { basename, resolve } from 'node:path'
 import { defineConfig } from 'tsdown'
 import { transform } from 'lightningcss'
+import ts from 'typescript'
 
 const id = 'mindspace-dsh-session-memory'
 const platformModules = [
@@ -13,6 +14,27 @@ const platformModules = [
 const cssPrefix = '\0mindspace-memory-css:'
 const cssSuffix = '.mjs'
 const cssFiles = new Map<string, string>()
+
+const lowerDecorators = {
+  name: 'mindspace-lower-decorators',
+  transform(code: string, id: string) {
+    const file = id.split('?', 1)[0] ?? id
+    if (!/\.[cm]?tsx?$/.test(file) || !/^\s*@[A-Za-z_$][\w$]*/m.test(code)) return
+    const result = ts.transpileModule(code, {
+      fileName: file,
+      compilerOptions: {
+        target: ts.ScriptTarget.ES2024,
+        module: ts.ModuleKind.ESNext,
+        ...(file.endsWith('x') ? { jsx: ts.JsxEmit.ReactJSX } : {}),
+        sourceMap: true,
+      },
+    })
+    return {
+      code: result.outputText.replace(/\n?\/\/# sourceMappingURL=.*$/u, '\n'),
+      map: result.sourceMapText,
+    }
+  },
+}
 
 export default defineConfig([
   {
@@ -29,6 +51,7 @@ export default defineConfig([
     dts: false,
     clean: true,
     fixedExtension: false,
+    plugins: [lowerDecorators],
     deps: {
       neverBundle: [
         /^@deepseek-ai\/dsh-compaction(?:\/.*)?$/,

@@ -1,12 +1,18 @@
 /** Client-safe values for one session's editable personalization memory. */
 
-import type { ContentBlock } from '@deepseek-ai/dsh-llm/types'
-
-/** Stable identity and text of one user-controlled memory entry. */
+/** Stable identity and compact, categorized text of one memory card. */
 export interface SessionMemoryItem {
   readonly id: string
+  readonly category: string
   readonly text: string
   readonly source: 'user' | 'extracted'
+  readonly evidenceSeqs: readonly number[]
+}
+
+/** A compact user portrait. Confirmed facts and AI observations stay visibly distinct. */
+export interface SessionUserProfile {
+  readonly confirmed: string
+  readonly inferred: string
   readonly evidenceSeqs: readonly number[]
 }
 
@@ -23,42 +29,48 @@ export interface SessionRoleplayPreset {
   readonly text: string
 }
 
-/** A summary read directly from DSH compaction or explicitly overridden. */
-export interface SessionMemorySummary {
-  readonly content: readonly ContentBlock[]
-  readonly text: string
-  readonly source: 'compaction' | 'user'
-  readonly sourceSeq: number
+export type SessionMemorySection =
+  | 'userProfile'
+  | 'preferences'
+  | 'assistantInstructions'
+  | 'relationship'
+  | 'roleplayPreset'
+
+/** One inspectable state transition produced by a manual or automatic merge. */
+export interface SessionMemoryActivity {
+  readonly id: string
+  readonly sourceSeqs: readonly number[]
+  readonly operation: 'append' | 'merge' | 'replace' | 'skip'
+  readonly section: SessionMemorySection
+  readonly before: string | null
+  readonly after: string | null
+  readonly reason: string
+  readonly at: number
 }
 
 /** Complete current memory state of one session. */
 export interface SessionMemoryDocument {
-  readonly version: 1
+  readonly version: 2
   readonly revision: number
-  readonly summaryOverride: string | null
+  readonly userProfile: SessionUserProfile
   readonly preferences: readonly SessionMemoryItem[]
-  readonly userFacts: readonly SessionMemoryItem[]
   readonly assistantInstructions: readonly SessionMemoryItem[]
   readonly relationship: SessionRelationship | null
   readonly roleplayPreset: SessionRoleplayPreset | null
   readonly updatedAt: number
 }
 
-/** Read view combining the editable document with the latest DSH compaction. */
+/** Public read view. DSH compaction remains an internal DSH concern. */
 export interface SessionMemoryView {
   readonly document: SessionMemoryDocument
-  /** Latest summary authored by DSH compaction, never hidden by an override. */
-  readonly compactionSummary: SessionMemorySummary | null
-  /** Effective summary: user override when present, otherwise compaction. */
-  readonly summary: SessionMemorySummary | null
+  readonly memoryActivity: readonly SessionMemoryActivity[]
 }
 
 /** Compare-and-set replacement written by the personalization editor. */
 export interface ReplaceSessionMemoryRequest {
   readonly expectedRevision: number
-  readonly summaryOverride: string | null
+  readonly userProfile: SessionUserProfile
   readonly preferences: readonly SessionMemoryItem[]
-  readonly userFacts: readonly SessionMemoryItem[]
   readonly assistantInstructions: readonly SessionMemoryItem[]
   readonly relationship: SessionRelationship | null
   readonly roleplayPreset: SessionRoleplayPreset | null
@@ -77,7 +89,7 @@ export type SessionMemoryMutationResult =
 
 declare module '@deepseek-ai/dsh-session-projection/types' {
   interface SessionProjectionMap {
-    /** Current per-session personalization memory, including the compaction summary. */
+    /** Current per-session personalization memory and its inspectable merge activity. */
     'session-memory': SessionMemoryView
   }
 }

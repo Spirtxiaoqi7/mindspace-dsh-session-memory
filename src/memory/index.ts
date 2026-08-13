@@ -8,52 +8,66 @@ import { z as zod } from 'zod'
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import type { Session, SessionEvent } from '@deepseek-ai/dsh-session'
 import type {} from '@deepseek-ai/dsh-system-prompt'
-import type {} from '@deepseek-ai/dsh-compaction'
 import type {} from '@deepseek-ai/dsh-session-projection'
-import type { ContentBlock } from '@deepseek-ai/dsh-llm/types'
 import { defineTool } from '@deepseek-ai/dsh-tools'
 import type { JsonValue } from '@deepseek-ai/dsh-session'
 import { Remote, TypertRemoteService } from '@deepseek-ai/dsh-typert-protocol'
 import type { SessionMemoryFoldState } from './fold.ts'
 import { applySessionMemoryEvent, emptySessionMemoryFoldState, foldSessionMemory, sessionMemoryView } from './fold.ts'
-import { DEFAULT_RELATIONSHIP_MISSION, extractTurn, mergeExtraction } from './extraction.ts'
+import {
+  DEFAULT_PROFILE_CHARACTERS,
+  DEFAULT_RELATIONSHIP_MISSION,
+  extractTurn,
+  MAX_MEMORY_CARDS,
+  mergeExtraction,
+} from './extraction.ts'
 import { renderSessionMemory } from './render.ts'
 import type {
   ReplaceSessionMemoryRequest,
+  SessionMemoryActivity,
   SessionMemoryDocument,
   SessionMemoryFailure,
   SessionMemoryItem,
   SessionMemoryMutationResult,
+  SessionMemorySection,
   SessionMemoryView,
 } from './types.ts'
 
 export type * from './types.ts'
 export * from './domain.ts'
-export { applySessionMemoryEvent, emptySessionMemory, emptySessionMemoryFoldState, foldSessionMemory, sessionMemoryView } from './fold.ts'
 export {
+  applySessionMemoryEvent,
+  emptySessionMemory,
+  emptySessionMemoryFoldState,
+  foldSessionMemory,
+  migrateLegacyDocument,
+  sessionMemoryView,
+} from './fold.ts'
+export {
+  DEFAULT_PROFILE_CHARACTERS,
   DEFAULT_RELATIONSHIP_MISSION,
   EXTRACTION_SYSTEM,
+  MAX_MEMORY_CARDS,
   mergeExtraction,
   parseExtraction,
   turnExtractionInput,
 } from './extraction.ts'
 export { renderSessionMemory } from './render.ts'
 
-/** Deployment policy for memory bounds and optional automatic extraction. */
 export interface Config {
-  /** Maximum UTF-8 byte length accepted for one editable text field. */
   readonly maxTextBytes?: number
-  /** Maximum number of entries retained in each list-shaped memory section. */
+  /** Hard-capped at three even when a legacy config asks for more. */
   readonly maxItemsPerSection?: number
-  /** Run conservative memory extraction after completed root-agent turns. */
+  /** Unicode code-point budget shared by confirmed and inferred profile text. */
+  readonly maxProfileCharacters?: number
   readonly autoExtract?: boolean
-  /** Maximum output tokens requested from the auxiliary extraction model call. */
   readonly extractionMaxTokens?: number
 }
 
 interface ResolvedConfig {
   readonly maxTextBytes: number
   readonly maxItemsPerSection: number
+  readonly maxProfileCharacters: number
   readonly autoExtract: boolean
   readonly extractionMaxTokens: number
 }
@@ -65,40 +79,45 @@ declare module '@deepseek-ai/cordis' {
 }
 
 const memoryItemSchema = zod.object({
-  id: zod.string(), text: zod.string(), source: zod.enum(['user', 'extracted']), evidenceSeqs: zod.array(zod.number()),
+  id: zod.string(),
+  category: zod.string(),
+  text: zod.string(),
+  source: zod.enum(['user', 'extracted']),
+  evidenceSeqs: zod.array(zod.number()),
+})
+const userProfileSchema = zod.object({
+  confirmed: zod.string(), inferred: zod.string(), evidenceSeqs: zod.array(zod.number()),
 })
 const relationshipSchema = zod.object({ role: zod.string(), mission: zod.string(), guidance: zod.string() })
 const roleplayPresetSchema = zod.object({ enabled: zod.boolean(), text: zod.string() })
-const contentBlockSchema = zod.custom<ContentBlock>(value => (
-  typeof value === 'object' && value !== null && typeof (value as { type?: unknown }).type === 'string'
-))
+const activitySchema = zod.object({
+  id: zod.string(),
+  sourceSeqs: zod.array(zod.number()),
+  operation: zod.enum(['append', 'merge', 'replace', 'skip']),
+  section: zod.enum(['userProfile', 'preferences', 'assistantInstructions', 'relationship', 'roleplayPreset']),
+  before: zod.string().nullable(),
+  after: zod.string().nullable(),
+  reason: zod.string(),
+  at: zod.number(),
+})
 const documentSchema = zod.object({
-  version: zod.literal(1), revision: zod.number(), summaryOverride: zod.string().nullable(),
-  preferences: zod.array(memoryItemSchema), userFacts: zod.array(memoryItemSchema),
-  assistantInstructions: zod.array(memoryItemSchema), relationship: relationshipSchema.nullable(),
-  roleplayPreset: roleplayPresetSchema.nullable(), updatedAt: zod.number(),
+  version: zod.literal(2), revision: zod.number(), userProfile: userProfileSchema,
+  preferences: zod.array(memoryItemSchema), assistantInstructions: zod.array(memoryItemSchema),
+  relationship: relationshipSchema.nullable(), roleplayPreset: roleplayPresetSchema.nullable(), updatedAt: zod.number(),
 })
-const summarySchema = zod.object({
-  content: zod.array(contentBlockSchema),
-  text: zod.string(),
-  source: zod.enum(['compaction', 'user']),
-  sourceSeq: zod.number(),
-})
-const viewSchema = zod.object({
-  document: documentSchema,
-  compactionSummary: summarySchema.nullable(),
-  summary: summarySchema.nullable(),
-})
+const viewSchema = zod.object({ document: documentSchema, memoryActivity: zod.array(activitySchema) })
 
 const MEMORY_TOOL_GUIDANCE = [
-  'Session memory is important durable user state. You MUST call update_session_memory before replying whenever the',
-  'user explicitly states or changes a stable preference, personal fact, assistant rule, relationship, identity,',
-  'conversation purpose, or roleplay preset. The user does not need to say "remember". Requests such as "be my wife",',
-  '"act as my mentor", "use Rust", and "do not do X" are direct memory triggers even when unrelated to coding.',
-  'Do not reject or ignore a relationship merely because your base identity is a coding agent; save the session-local',
-  'role and then respond within applicable boundaries. Read memory first before correcting or deleting so you can pass',
-  'the exact item id. A newer explicit user statement is authoritative and may replace conflicting older memory.',
-  'Never write guesses or inferred sensitive facts. These tools can access only the current conversation.',
+  'Session memory is important durable user state. Call update_session_memory before replying whenever the user',
+  'explicitly states or changes stable personal information, a preference, an assistant rule, relationship, identity,',
+  'conversation purpose, or roleplay preset. The user does not need to say remember. Merge related preferences and',
+  'assistant instructions into categorized cards; each section can contain at most three cards. New explicit facts',
+  'replace conflicts. The personal profile separates confirmed user facts from cautious inferred observations.',
+  'Taxonomy is strict: userProfile is only identity, demographics, location, work, skills, life state, and durable',
+  'traits; preferences is what the user likes, dislikes, chooses, or habitually uses; assistantInstructions is how',
+  'the assistant must answer or act. Never put answer-style rules in preferences, and never put likes/dislikes in',
+  'userProfile. One message may require several update_session_memory calls so every section is updated.',
+  'Never store an inference as confirmed or infer sensitive data. These tools affect only the current conversation.',
 ].join(' ')
 
 const NEW_SESSION_ONBOARDING = [
@@ -107,13 +126,10 @@ const NEW_SESSION_ONBOARDING = [
   'already supplied any of those, do not ask again: persist the explicit setting with update_session_memory instead.',
 ].join(' ')
 
-type SessionMemoryRemoteInitializer = (this: SessionMemoryService) => void
-const SESSION_MEMORY_REMOTE_INITIALIZERS: SessionMemoryRemoteInitializer[] = []
-
 function isEmptyDocument(document: SessionMemoryDocument): boolean {
-  return document.summaryOverride === null
+  return document.userProfile.confirmed.length === 0
+    && document.userProfile.inferred.length === 0
     && document.preferences.length === 0
-    && document.userFacts.length === 0
     && document.assistantInstructions.length === 0
     && document.relationship === null
     && document.roleplayPreset === null
@@ -135,19 +151,20 @@ function validateItems(
   config: ResolvedConfig,
 ): SessionMemoryFailure | undefined {
   if (items.length > config.maxItemsPerSection) {
-    return {
-      code: 'invalid-document',
-      message: `${field} has ${items.length} items; limit is ${config.maxItemsPerSection}`,
-    }
+    return { code: 'invalid-document', message: `${field} has ${items.length} cards; limit is ${config.maxItemsPerSection}` }
   }
   const ids = new Set<string>()
+  const categories = new Set<string>()
   for (const [index, item] of items.entries()) {
-    const idError = validateText(item.id, `${field}[${index}].id`, config.maxTextBytes)
-    if (idError !== undefined) return idError
-    const textError = validateText(item.text, `${field}[${index}].text`, config.maxTextBytes)
-    if (textError !== undefined) return textError
+    for (const [name, value] of [['id', item.id], ['category', item.category], ['text', item.text]] as const) {
+      const invalid = validateText(value, `${field}[${index}].${name}`, config.maxTextBytes)
+      if (invalid !== undefined) return invalid
+    }
     if (ids.has(item.id)) return { code: 'invalid-document', message: `${field} repeats item id ${JSON.stringify(item.id)}` }
     ids.add(item.id)
+    const category = item.category.trim().toLocaleLowerCase()
+    if (categories.has(category)) return { code: 'invalid-document', message: `${field} repeats category ${JSON.stringify(item.category)}` }
+    categories.add(category)
     if (item.evidenceSeqs.some(seq => !Number.isSafeInteger(seq) || seq < 0)) {
       return { code: 'invalid-document', message: `${field}[${index}] has an invalid evidence sequence` }
     }
@@ -162,14 +179,28 @@ function resolveDocument(
   config: ResolvedConfig,
 ): SessionMemoryDocument | SessionMemoryFailure {
   for (const [field, items] of [
-    ['preferences', request.preferences], ['userFacts', request.userFacts], ['assistantInstructions', request.assistantInstructions],
+    ['preferences', request.preferences], ['assistantInstructions', request.assistantInstructions],
   ] as const) {
     const invalid = validateItems(items, field, config)
     if (invalid !== undefined) return invalid
   }
-  if (request.summaryOverride !== null) {
-    const invalid = validateText(request.summaryOverride, 'summaryOverride', config.maxTextBytes)
-    if (invalid !== undefined) return invalid
+  const profileCharacters = [...`${request.userProfile.confirmed}${request.userProfile.inferred}`].length
+  if (profileCharacters > config.maxProfileCharacters) {
+    return {
+      code: 'text-too-large',
+      message: `userProfile is ${profileCharacters} characters; limit is ${config.maxProfileCharacters}`,
+    }
+  }
+  for (const [field, value] of [
+    ['userProfile.confirmed', request.userProfile.confirmed],
+    ['userProfile.inferred', request.userProfile.inferred],
+  ] as const) {
+    if (Buffer.byteLength(value, 'utf8') > config.maxTextBytes) {
+      return { code: 'text-too-large', message: `${field} exceeds ${config.maxTextBytes} bytes` }
+    }
+  }
+  if (request.userProfile.evidenceSeqs.some(seq => !Number.isSafeInteger(seq) || seq < 0)) {
+    return { code: 'invalid-document', message: 'userProfile has an invalid evidence sequence' }
   }
   if (request.relationship !== null) {
     for (const field of ['role', 'mission'] as const) {
@@ -189,23 +220,24 @@ function resolveDocument(
     }
   }
   return {
-    version: 1, revision, summaryOverride: request.summaryOverride,
+    version: 2,
+    revision,
+    userProfile: {
+      confirmed: request.userProfile.confirmed.trim().replace(/^(?:已确认|确认信息)[:：]\s*/u, ''),
+      inferred: request.userProfile.inferred.trim().replace(/^(?:AI\s*观察|观察)[:：]\s*/iu, ''),
+      evidenceSeqs: [...request.userProfile.evidenceSeqs],
+    },
     preferences: request.preferences.map(item => ({
-      ...item, text: item.text.trim(), evidenceSeqs: [...item.evidenceSeqs],
-    })),
-    userFacts: request.userFacts.map(item => ({
-      ...item, text: item.text.trim(), evidenceSeqs: [...item.evidenceSeqs],
+      ...item, category: item.category.trim(), text: item.text.trim(), evidenceSeqs: [...item.evidenceSeqs],
     })),
     assistantInstructions: request.assistantInstructions.map(item => ({
-      ...item, text: item.text.trim(), evidenceSeqs: [...item.evidenceSeqs],
+      ...item, category: item.category.trim(), text: item.text.trim(), evidenceSeqs: [...item.evidenceSeqs],
     })),
-    relationship: request.relationship === null
-      ? null
-      : {
-        role: request.relationship.role.trim(),
-        mission: request.relationship.mission.trim(),
-        guidance: request.relationship.guidance.trim(),
-      },
+    relationship: request.relationship === null ? null : {
+      role: request.relationship.role.trim(),
+      mission: request.relationship.mission.trim(),
+      guidance: request.relationship.guidance.trim(),
+    },
     roleplayPreset: request.roleplayPreset === null || request.roleplayPreset.text.trim().length === 0
       ? null
       : { enabled: request.roleplayPreset.enabled, text: request.roleplayPreset.text.trim() },
@@ -213,14 +245,70 @@ function resolveDocument(
   }
 }
 
-/** Session-memory service: Remote read/edit, replay projection, prompt contribution, and extraction. */
+function displayProfile(document: SessionMemoryDocument): string | null {
+  const { confirmed, inferred } = document.userProfile
+  return confirmed.length === 0 && inferred.length === 0 ? null : `已确认：${confirmed}\n观察：${inferred}`
+}
+
+function makeActivity(
+  section: SessionMemorySection,
+  before: string | null,
+  after: string | null,
+  time: number,
+  sourceSeqs: readonly number[],
+): SessionMemoryActivity {
+  return {
+    id: `activity-${randomUUID()}`,
+    sourceSeqs: [...sourceSeqs],
+    operation: before === null ? 'append' : after !== null && after.includes(before) ? 'merge' : 'replace',
+    section,
+    before,
+    after,
+    reason: sourceSeqs.length === 0
+      ? '用户在记忆中心编辑了该记忆。'
+      : '根据用户当前消息更新了该记忆。',
+    at: time,
+  }
+}
+
+function auditManualChange(
+  current: SessionMemoryDocument,
+  next: SessionMemoryDocument,
+  time: number,
+  sourceSeqs: readonly number[],
+): SessionMemoryActivity[] {
+  const changes: SessionMemoryActivity[] = []
+  const beforeProfile = displayProfile(current)
+  const afterProfile = displayProfile(next)
+  if (beforeProfile !== afterProfile) changes.push(makeActivity('userProfile', beforeProfile, afterProfile, time, sourceSeqs))
+  for (const section of ['preferences', 'assistantInstructions'] as const) {
+    const before = current[section]
+    const after = next[section]
+    const ids = new Set([...before.map(item => item.id), ...after.map(item => item.id)])
+    for (const id of ids) {
+      const oldItem = before.find(item => item.id === id)
+      const newItem = after.find(item => item.id === id)
+      const oldText = oldItem === undefined ? null : `${oldItem.category}：${oldItem.text}`
+      const newText = newItem === undefined ? null : `${newItem.category}：${newItem.text}`
+      if (oldText !== newText) changes.push(makeActivity(section, oldText, newText, time, sourceSeqs))
+    }
+  }
+  for (const section of ['relationship', 'roleplayPreset'] as const) {
+    const before = current[section] === null ? null : JSON.stringify(current[section])
+    const after = next[section] === null ? null : JSON.stringify(next[section])
+    if (before !== after) changes.push(makeActivity(section, before, after, time, sourceSeqs))
+  }
+  return changes
+}
+
 export class SessionMemoryService extends TypertRemoteService {
   static inject = ['agents', 'sessions', 'tools', 'systemPrompt']
   static Config: z<Config> = z.object({
     maxTextBytes: z.number().step(1).min(1).default(4096),
-    maxItemsPerSection: z.number().step(1).min(1).default(64),
+    maxItemsPerSection: z.number().step(1).min(1).max(MAX_MEMORY_CARDS).default(MAX_MEMORY_CARDS),
+    maxProfileCharacters: z.number().step(1).min(1).default(DEFAULT_PROFILE_CHARACTERS),
     autoExtract: z.boolean().default(true),
-    extractionMaxTokens: z.number().step(1).min(1).default(1024),
+    extractionMaxTokens: z.number().step(1).min(1).default(1536),
   })
 
   private readonly resolved: ResolvedConfig
@@ -228,19 +316,19 @@ export class SessionMemoryService extends TypertRemoteService {
 
   constructor(ctx: Context, config: Config = {}) {
     super(ctx, 'sessionMemory')
-    for (const initialize of SESSION_MEMORY_REMOTE_INITIALIZERS) initialize.call(this)
     this.resolved = {
       maxTextBytes: config.maxTextBytes ?? 4096,
-      maxItemsPerSection: config.maxItemsPerSection ?? 64,
+      maxItemsPerSection: Math.min(config.maxItemsPerSection ?? MAX_MEMORY_CARDS, MAX_MEMORY_CARDS),
+      maxProfileCharacters: config.maxProfileCharacters ?? DEFAULT_PROFILE_CHARACTERS,
       autoExtract: config.autoExtract ?? true,
-      extractionMaxTokens: config.extractionMaxTokens ?? 1024,
+      extractionMaxTokens: config.extractionMaxTokens ?? 1536,
     }
     ctx.systemPrompt.section({ name: 'tool:session-memory', order: 113, text: MEMORY_TOOL_GUIDANCE })
     this.registerTools()
     ctx.inject(['sessionProjections'], (projectionCtx) => {
       projectionCtx.sessionProjections.register<'session-memory', SessionMemoryFoldState>({
         key: 'session-memory', schema: viewSchema, init: emptySessionMemoryFoldState,
-        apply: applySessionMemoryEvent, view: sessionMemoryView, stateVersion: 1,
+        apply: applySessionMemoryEvent, view: sessionMemoryView, stateVersion: 2,
       })
     })
     ctx.inject(['systemPrompt'], (promptCtx) => {
@@ -262,30 +350,23 @@ export class SessionMemoryService extends TypertRemoteService {
               (event): event is SessionEvent<'session-memory/extraction-result'> =>
                 event.type === 'session-memory/extraction-result' && event.data.turn === turn,
             )
-            const next = mergeExtraction(current, proposal, result?.data.sourceSeqs ?? [], Date.now())
-            const changed = next.preferences.length !== current.preferences.length
-              || next.userFacts.length !== current.userFacts.length
-              || next.assistantInstructions.length !== current.assistantInstructions.length
-              || JSON.stringify(next.relationship) !== JSON.stringify(current.relationship)
-              || JSON.stringify(next.roleplayPreset) !== JSON.stringify(current.roleplayPreset)
-            if (changed) {
-              const validated = resolveDocument({
-                expectedRevision: current.revision,
-                summaryOverride: next.summaryOverride,
-                preferences: next.preferences,
-                userFacts: next.userFacts,
-                assistantInstructions: next.assistantInstructions,
-                relationship: next.relationship,
-                roleplayPreset: next.roleplayPreset,
-              }, next.revision, next.updatedAt, this.resolved)
-              if ('code' in validated) {
-                ctx.logger.warn(`session-memory extraction rejected for session ${agent.id}: ${validated.message}`)
-                return
-              }
-              agent.session.append('session-memory/change', {
-                version: 1, operation: 'replace', document: validated,
-              })
+            const merged = mergeExtraction(current, proposal, result?.data.sourceSeqs ?? [], Date.now())
+            if (merged.changes.length === 0) return
+            const validated = resolveDocument({
+              expectedRevision: current.revision,
+              userProfile: merged.document.userProfile,
+              preferences: merged.document.preferences,
+              assistantInstructions: merged.document.assistantInstructions,
+              relationship: merged.document.relationship,
+              roleplayPreset: merged.document.roleplayPreset,
+            }, merged.document.revision, merged.document.updatedAt, this.resolved)
+            if ('code' in validated) {
+              ctx.logger.warn(`session-memory extraction rejected for session ${agent.id}: ${validated.message}`)
+              return
             }
+            agent.session.append('session-memory/change', {
+              version: 2, operation: 'replace', document: validated, changes: merged.changes,
+            })
           } catch (error: unknown) {
             const message = error instanceof Error ? error.message : String(error)
             ctx.logger.warn(`session-memory extraction failed for session ${agent.id}: ${message}`)
@@ -295,25 +376,33 @@ export class SessionMemoryService extends TypertRemoteService {
     }
   }
 
-  /** Read one live session's current memory view. */
+  @Remote('get')
   get(agent: Agent): SessionMemoryView {
     this.assertLive(agent)
     return foldSessionMemory(agent.session.events)
   }
 
-  /** Replace editable fields if the caller observed the current revision. */
+  @Remote('replace')
   async replace(agent: Agent, request: ReplaceSessionMemoryRequest): Promise<SessionMemoryMutationResult> {
+    return this.commit(agent, request, [])
+  }
+
+  private async commit(
+    agent: Agent,
+    request: ReplaceSessionMemoryRequest,
+    sourceSeqs: readonly number[],
+  ): Promise<SessionMemoryMutationResult> {
     this.assertLive(agent)
     const current = foldSessionMemory(agent.session.events).document
     if (request.expectedRevision !== current.revision) {
-      return failure(
-        'stale-revision',
-        `expected revision ${request.expectedRevision}; current revision is ${current.revision}`,
-      )
+      return failure('stale-revision', `expected revision ${request.expectedRevision}; current revision is ${current.revision}`)
     }
-    const resolved = resolveDocument(request, current.revision + 1, Date.now(), this.resolved)
+    const time = Date.now()
+    const resolved = resolveDocument(request, current.revision + 1, time, this.resolved)
     if ('code' in resolved) return { ok: false, error: resolved }
-    agent.session.append('session-memory/change', { version: 1, operation: 'replace', document: resolved })
+    const changes = auditManualChange(current, resolved, time, sourceSeqs)
+    if (changes.length === 0) return { ok: true, value: foldSessionMemory(agent.session.events) }
+    agent.session.append('session-memory/change', { version: 2, operation: 'replace', document: resolved, changes })
     await this.ctx.sessions.flush(agent.session)
     return { ok: true, value: foldSessionMemory(agent.session.events) }
   }
@@ -325,13 +414,9 @@ export class SessionMemoryService extends TypertRemoteService {
   private registerTools(): void {
     this.ctx.tools.register(defineTool({
       name: 'get_session_memory',
-      description: 'Read editable memory for the current conversation. Use before correcting, replacing, or deleting '
-        + 'memory so update_session_memory can receive the exact existing item id.',
+      description: 'Read the current compact profile, categorized cards, relationship, preset, and change activity.',
       parameters: {},
-      output: {
-        schema: { type: 'json' },
-        render: (_args, value) => [{ type: 'text', text: JSON.stringify(value) }],
-      },
+      output: { schema: { type: 'json' }, render: (_args, value) => [{ type: 'text', text: JSON.stringify(value) }] },
       execute: (_args, exec): Promise<JsonValue> => {
         if (exec.agent === undefined) throw new Error('get_session_memory requires an Agent-backed session')
         return Promise.resolve(this.get(exec.agent) as unknown as JsonValue)
@@ -339,78 +424,98 @@ export class SessionMemoryService extends TypertRemoteService {
     }))
     this.ctx.tools.register(defineTool({
       name: 'update_session_memory',
-      description: 'Persist explicit user personalization in the current conversation only, before replying. The user '
-        + 'does not need to say remember: stable preferences, facts, assistant rules, relationships, identities, '
-        + 'conversation purposes, and roleplay requests all trigger this tool. Replace conflicts by exact item id.',
+      description: 'Persist explicit personalization now. Match item cards by category; exact item ids are optional. '
+        + 'Merge related details and replace conflicts instead of creating sentence-shaped duplicate cards. '
+        + 'Use userProfile only for identity/location/work/skills/life state; preferences for likes/dislikes/choices; '
+        + 'assistantInstructions for rules governing assistant answers and behavior.',
       parameters: {
         action: {
-          type: 'string',
-          required: true,
+          type: 'string', required: true,
           enum: [
-            'upsert_item', 'remove_item', 'set_relationship', 'clear_relationship',
+            'set_user_profile', 'upsert_item', 'remove_item', 'set_relationship', 'clear_relationship',
             'set_roleplay_preset', 'clear_roleplay_preset',
           ],
         },
         section: {
-          type: 'string',
-          enum: ['preferences', 'userFacts', 'assistantInstructions'],
-          description: 'Required for item actions.',
+          type: 'string', enum: ['preferences', 'assistantInstructions'],
+          description: 'preferences = user likes/dislikes/choices; assistantInstructions = rules for AI replies/actions.',
         },
-        text: { type: 'string', description: 'New item text or roleplay preset text.' },
-        item_id: {
+        category: { type: 'string', description: 'Stable category used to merge a card without needing its item id.' },
+        text: { type: 'string', description: 'Complete consolidated card or roleplay preset text.' },
+        item_id: { type: 'string', description: 'Optional exact card id for editing or removal.' },
+        confirmed: {
           type: 'string',
-          description: 'Exact item id returned by get_session_memory; replacement or removal target.',
+          description: 'Complete confirmed identity/location/work/skills/life-state profile; exclude preferences and AI rules.',
         },
-        role: { type: 'string', description: 'Relationship identity.' },
-        mission: { type: 'string', description: 'Optional purpose assigned to this conversation.' },
-        guidance: { type: 'string', description: 'Optional relationship guidance.' },
-        enabled: { type: 'boolean', description: 'Whether a roleplay preset is injected. Defaults to true when setting.' },
+        inferred: {
+          type: 'string',
+          description: 'Complete cautious inferred traits; exclude likes/dislikes and rules for AI replies.',
+        },
+        role: { type: 'string' },
+        mission: { type: 'string' },
+        guidance: { type: 'string' },
+        enabled: { type: 'boolean' },
       },
-      output: {
-        schema: { type: 'json' },
-        render: (_args, value) => [{ type: 'text', text: JSON.stringify(value) }],
-      },
+      output: { schema: { type: 'json' }, render: (_args, value) => [{ type: 'text', text: JSON.stringify(value) }] },
       execute: async (args, exec): Promise<JsonValue> => {
         if (exec.agent === undefined) throw new Error('update_session_memory requires an Agent-backed session')
         const current = this.get(exec.agent).document
+        const latestUser = exec.agent.session.events.findLast(
+          event => event.type === 'user/message' && event.data.source.kind === 'user',
+        )
+        const sourceSeqs = latestUser === undefined ? [] : [latestUser.seq]
         const request: ReplaceSessionMemoryRequest = {
           expectedRevision: current.revision,
-          summaryOverride: current.summaryOverride,
+          userProfile: current.userProfile,
           preferences: [...current.preferences],
-          userFacts: [...current.userFacts],
           assistantInstructions: [...current.assistantInstructions],
           relationship: current.relationship,
           roleplayPreset: current.roleplayPreset,
         }
-        if (args.action === 'upsert_item' || args.action === 'remove_item') {
+        if (args.action === 'set_user_profile') {
+          Object.assign(request, {
+            userProfile: {
+              confirmed: args.confirmed ?? current.userProfile.confirmed,
+              inferred: args.inferred ?? current.userProfile.inferred,
+              evidenceSeqs: [...new Set([...current.userProfile.evidenceSeqs, ...sourceSeqs])],
+            },
+          })
+        } else if (args.action === 'upsert_item' || args.action === 'remove_item') {
           if (args.section === undefined) throw new Error('section is required for item actions')
           const entries = [...request[args.section]]
-          const at = args.item_id === undefined ? -1 : entries.findIndex(entry => entry.id === args.item_id)
-          if (args.item_id !== undefined && at < 0) {
-            throw new Error(`memory item ${args.item_id} does not exist in ${args.section}`)
-          }
+          const byId = args.item_id === undefined ? -1 : entries.findIndex(entry => entry.id === args.item_id)
+          const byCategory = args.category === undefined
+            ? -1
+            : entries.findIndex(entry => entry.category.toLocaleLowerCase() === args.category?.trim().toLocaleLowerCase())
+          const at = byId >= 0 ? byId : byCategory
           if (args.action === 'remove_item') {
-            if (at < 0) throw new Error('item_id is required for remove_item')
+            if (at < 0) throw new Error('item_id or matching category is required for remove_item')
             entries.splice(at, 1)
           } else {
-            if (args.text === undefined || args.text.trim().length === 0) {
-              throw new Error('text is required for upsert_item')
-            }
-            const replacedId = at < 0 ? undefined : entries[at]?.id
-            const next = {
-              id: replacedId ?? `memory-${randomUUID()}`,
+            if (args.text === undefined || args.text.trim().length === 0) throw new Error('text is required for upsert_item')
+            if (args.category === undefined || args.category.trim().length === 0) throw new Error('category is required')
+            const next: SessionMemoryItem = {
+              id: entries[at]?.id ?? `memory-${randomUUID()}`,
+              category: args.category,
               text: args.text,
-              source: 'user' as const,
-              evidenceSeqs: [],
+              source: 'user',
+              evidenceSeqs: [...new Set([...(entries[at]?.evidenceSeqs ?? []), ...sourceSeqs])],
             }
-            if (at < 0) entries.push(next)
-            else entries.splice(at, 1, next)
+            if (at >= 0) entries.splice(at, 1, next)
+            else if (entries.length < MAX_MEMORY_CARDS) entries.push(next)
+            else {
+              const shortest = entries.reduce((best, item, index) => item.text.length < entries[best]!.text.length ? index : best, 0)
+              const target = entries[shortest]!
+              entries.splice(shortest, 1, {
+                ...target,
+                category: `${target.category} / ${next.category}`,
+                text: `${target.text}；${next.category}：${next.text}`,
+              })
+            }
           }
           Object.assign(request, { [args.section]: entries })
         } else if (args.action === 'set_relationship') {
-          if (args.role === undefined || args.role.trim().length === 0) {
-            throw new Error('role is required for set_relationship')
-          }
+          if (args.role === undefined || args.role.trim().length === 0) throw new Error('role is required')
           Object.assign(request, {
             relationship: {
               role: args.role,
@@ -421,14 +526,12 @@ export class SessionMemoryService extends TypertRemoteService {
         } else if (args.action === 'clear_relationship') {
           Object.assign(request, { relationship: null })
         } else if (args.action === 'set_roleplay_preset') {
-          if (args.text === undefined || args.text.trim().length === 0) {
-            throw new Error('text is required for set_roleplay_preset')
-          }
+          if (args.text === undefined || args.text.trim().length === 0) throw new Error('text is required')
           Object.assign(request, { roleplayPreset: { enabled: args.enabled ?? true, text: args.text } })
         } else {
           Object.assign(request, { roleplayPreset: null })
         }
-        const result = await this.replace(exec.agent, request)
+        const result = await this.commit(exec.agent, request, sourceSeqs)
         if (!result.ok) throw new Error(`${result.error.code}: ${result.error.message}`)
         return result.value as unknown as JsonValue
       },
@@ -452,25 +555,5 @@ export class SessionMemoryService extends TypertRemoteService {
 }
 
 export default SessionMemoryService
-
-function markRemoteMethod(method: 'get' | 'replace'): void {
-  const target = SessionMemoryService.prototype[method] as (this: SessionMemoryService, ...args: never[]) => unknown
-  Remote(method)(target, {
-    name: method,
-    kind: 'method',
-    static: false,
-    private: false,
-    access: {
-      has: (value: unknown) => method in (value as object),
-      get: (value: unknown) => (value as SessionMemoryService)[method] as typeof target,
-    },
-    addInitializer: (initializer: SessionMemoryRemoteInitializer) => {
-      SESSION_MEMORY_REMOTE_INITIALIZERS.push(initializer)
-    },
-  } as ClassMethodDecoratorContext<SessionMemoryService, typeof target>)
-}
-
-markRemoteMethod('get')
-markRemoteMethod('replace')
 
 export type { Session }
