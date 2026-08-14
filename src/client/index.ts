@@ -11,7 +11,10 @@ declare module '@deepseek-ai/dsh-client-ui-slots' {
   interface LocaleNamespaceMap { 'settings.sessionMemory': SessionMemoryKey }
 }
 
-export const inject = ['slots', 'locale', 'remote', 'remote.sessionMemory']
+// The Remote is mounted by this plugin in apply().  Declaring the same
+// namespace as an injection prerequisite creates a boot-time self-wait: the
+// client cannot reach apply() until a service it has not mounted yet exists.
+export const inject = ['slots', 'locale', 'remote']
 
 /** Mount the plugin-owned Remote, then register the Personalization section. */
 export async function apply(ctx: ClientContext): Promise<void> {

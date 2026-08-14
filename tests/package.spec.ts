@@ -29,4 +29,10 @@ describe('installable DSH bundle', () => {
     expect(client).toContain('$mount')
     expect(typert).toContain('package: "mindspace-dsh-session-memory"')
   })
+
+  it('does not wait for its own Remote before mounting it', () => {
+    const clientSource = readFileSync(resolve(root, 'src/client/index.ts'), 'utf8')
+    expect(clientSource).toContain("export const inject = ['slots', 'locale', 'remote']")
+    expect(clientSource).not.toContain("'remote.sessionMemory'")
+  })
 })
