@@ -67,7 +67,7 @@ the default Web profile.
 Prebuilt tarball or npm package (no install-time build permission):
 
 ```sh
-dsh plugin --profile web add ./mindspace-dsh-session-memory-0.2.0.tgz
+dsh plugin --profile web add ./mindspace-dsh-session-memory-0.2.1.tgz
 dsh --profile web --dump-config
 dsh web
 ```
@@ -75,6 +75,10 @@ dsh web
 The repository deliberately does not expose an install-time build script. Install a
 release tarball or npm artifact; a raw GitHub checkout is source for review and
 development, not an installable prebuilt artifact.
+
+Version `0.2.1` removes entry overrides that only applied to an early experimental
+checkout, so it composes cleanly in an unmodified official Web profile without
+`entry not found` diagnostics.
 
 ## How it composes
 

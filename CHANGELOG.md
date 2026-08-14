@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.2.1 - 2026-08-14
+
+- Removed compatibility overrides for two experimental in-tree entry ids.
+- Made the bundle patch cleanly installable on an unmodified official Web profile without `entry not found` diagnostics.
+
 ## 0.2.0 - 2026-08-14
 
 - Replaced the public DSH compaction override with a compact confirmed/inferred user profile.

@@ -61,13 +61,16 @@ V2 验收已通过 10 项自动化测试、构建与打包、真实模型写入/
 安装预构建 tarball（无需授权安装脚本）：
 
 ```sh
-dsh plugin --profile web add ./mindspace-dsh-session-memory-0.2.0.tgz
+dsh plugin --profile web add ./mindspace-dsh-session-memory-0.2.1.tgz
 dsh --profile web --dump-config
 dsh web
 ```
 
 仓库刻意不提供安装时构建脚本。用户应安装 release tarball 或 npm 预构建产物；
 GitHub 源码用于审查和开发，不作为可直接安装的预构建包。
+
+`0.2.1` 已移除只适用于早期实验 checkout 的入口覆盖，可在干净的官方 Web
+profile 中直接组合，不再产生 `entry not found` 诊断。
 
 ## 组合方式
 

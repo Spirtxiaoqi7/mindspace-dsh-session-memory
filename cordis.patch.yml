@@ -1,10 +1,7 @@
 # Session-isolated personalization memory for a DeepSeek Harness Web profile.
-# Disable the experimental in-tree V1 pair when present so this bundle remains
-# the only owner of the service, Remote contract, and settings entry.
-- id: session-memory-governance
-  disabled: true
-- id: ui-session-memory
-  disabled: true
+# This out-of-tree bundle owns its service, Remote contract, and settings entry.
+# It does not target or disable entries from another checkout, so the patch is
+# portable across clean official profiles.
 - insert:
     - id: mindspace-session-memory
       name: mindspace-dsh-session-memory
