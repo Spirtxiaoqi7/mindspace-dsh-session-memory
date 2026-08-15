@@ -370,7 +370,7 @@ export class SessionMemoryService extends TypertRemoteService {
             }
             agent.session.append('session-memory/change', {
               version: 2, operation: 'replace', document: validated, changes: merged.changes,
-            })
+            }, { ignorable: true })
           } catch (error: unknown) {
             const message = error instanceof Error ? error.message : String(error)
             ctx.logger.warn(`session-memory extraction failed for session ${agent.id}: ${message}`)
@@ -406,7 +406,7 @@ export class SessionMemoryService extends TypertRemoteService {
     if ('code' in resolved) return { ok: false, error: resolved }
     const changes = auditManualChange(current, resolved, time, sourceSeqs)
     if (changes.length === 0) return { ok: true, value: foldSessionMemory(agent.session.events) }
-    agent.session.append('session-memory/change', { version: 2, operation: 'replace', document: resolved, changes })
+    agent.session.append('session-memory/change', { version: 2, operation: 'replace', document: resolved, changes }, { ignorable: true })
     await this.ctx.sessions.flush(agent.session)
     return { ok: true, value: foldSessionMemory(agent.session.events) }
   }

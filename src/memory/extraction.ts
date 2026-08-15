@@ -408,7 +408,7 @@ export async function extractTurn(
     input: extractionInput,
     maxTokens,
     sourceSeqs: input.sourceSeqs,
-  })
+  }, { ignorable: true })
   const assembler = new BlockAssembler()
   const messages = [createUserMessage({
     content: [{ type: 'text', text: extractionInput }],
@@ -433,6 +433,6 @@ export async function extractTurn(
     rawOutput: blocks,
     accepted: proposal !== undefined,
     sourceSeqs: input.sourceSeqs,
-  })
+  }, { ignorable: true })
   return proposal
 }

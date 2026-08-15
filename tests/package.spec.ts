@@ -33,6 +33,6 @@ describe('installable DSH bundle', () => {
   it('does not wait for its own Remote before mounting it', () => {
     const clientSource = readFileSync(resolve(root, 'src/client/index.ts'), 'utf8')
     expect(clientSource).toContain("export const inject = ['slots', 'locale', 'remote']")
-    expect(clientSource).not.toContain("'remote.sessionMemory'")
+    expect(clientSource).not.toMatch(/export const inject = \[[^\]]*remote\.sessionMemory/)
   })
 })

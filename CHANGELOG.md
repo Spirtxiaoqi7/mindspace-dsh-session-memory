@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.2.4
+
+- Fix the Personalization settings panel on current DSH runtimes by resolving
+  the plugin-owned Remote after it is mounted, instead of reading it from a
+  guarded dependency context during slot rendering.
+
+## 0.2.3
+
+- Mark plugin-owned session events as ignorable persistence records so an
+  external plugin cannot make a session unreadable after a cold restart.
+- Add a backed-up, atomic repair utility for logs written by 0.2.2 and older.
+
 ## 0.2.1 - 2026-08-14
 
 - Removed compatibility overrides for two experimental in-tree entry ids.

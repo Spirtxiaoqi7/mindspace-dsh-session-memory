@@ -1,6 +1,6 @@
 {
   "name": "mindspace-dsh-session-memory",
-  "version": "0.2.2",
+  "version": "0.2.4",
   "description": "Editable, session-isolated personalization memory for DeepSeek Harness",
   "type": "module",
   "license": "MIT",
@@ -31,6 +31,7 @@
   },
   "files": [
     "lib",
+    "scripts/repair-legacy-session-events.mjs",
     "assets/repository-logo.png",
     "cordis.patch.yml",
     "README.md",
