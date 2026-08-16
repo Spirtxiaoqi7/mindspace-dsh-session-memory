@@ -78,7 +78,7 @@ interface ResolvedConfig {
 
 declare module '@deepseek-ai/cordis' {
   interface Context {
-    sessionMemory: SessionMemoryService
+    mindspaceSessionMemory: SessionMemoryService
   }
 }
 
@@ -322,16 +322,10 @@ export class SessionMemoryService extends TypertRemoteService {
   private readonly installedAgents = new WeakSet<Agent>()
 
   constructor(ctx: Context, config: Config = {}) {
-    super(ctx, 'sessionMemory')
-    // This package owns hand-written strict descriptors.  DSH can construct a
-    // service again while reconciling bundle patches during cold boot; the
-    // registry itself deliberately rejects a second contribution with the
-    // same package name.  The first live service owns the descriptors, and a
-    // reconciled instance must reuse that contribution rather than aborting
-    // the whole Web profile.
-    if (ctx.typert.remotes.get('sessionMemory/get') === undefined) {
-      ctx.typert.register(TYPERT)
-    }
+    super(ctx, 'mindspaceSessionMemory')
+    // This package has hand-written strict descriptors rather than a generated
+    // host-face export, so its one host service owns the one registration.
+    ctx.typert.register(TYPERT)
     this.resolved = {
       maxTextBytes: config.maxTextBytes ?? 4096,
       maxItemsPerSection: Math.min(config.maxItemsPerSection ?? MAX_MEMORY_CARDS, MAX_MEMORY_CARDS),

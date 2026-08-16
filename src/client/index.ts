@@ -11,40 +11,20 @@ declare module '@deepseek-ai/dsh-client-ui-slots' {
   interface LocaleNamespaceMap { 'settings.sessionMemory': SessionMemoryKey }
 }
 
-// The Remote is mounted by this plugin in apply().  Declaring the same
-// namespace as an injection prerequisite creates a boot-time self-wait: the
-// client cannot reach apply() until a service it has not mounted yet exists.
+// This package uses hand-written strict descriptors.  Its browser face mounts
+// the single package contribution atomically before consuming the namespace.
 export const inject = ['slots', 'locale', 'remote']
 
 /** Mount the plugin-owned Remote, then register the Personalization section. */
 export async function apply(ctx: ClientContext): Promise<void> {
-  // A Web client may remain alive across a plugin upgrade. The gateway mounts a
-  // contribution atomically, so a legacy get/replace endpoint would otherwise
-  // reject the whole batch and leave newly added methods unavailable. Mounting
-  // each strict generated descriptor lets existing endpoints stay owned by the
-  // old fiber while newly introduced endpoints become callable immediately.
-  for (const descriptor of sessionMemoryRemote.descriptors) {
-    try {
-      const disposeRemote = await ctx.remote.$mount({
-        ...sessionMemoryRemote,
-        descriptors: [descriptor],
-      })
-      ctx.effect(() => disposeRemote, `mindspace-session-memory: remote:${descriptor.method}`)
-    } catch (error: unknown) {
-      const message = error instanceof Error ? error.message : String(error)
-      if (!message.includes(`${descriptor.namespace}/${descriptor.method} is already mounted`)) throw error
-    }
-  }
+  const disposeRemote = await ctx.remote.$mount(sessionMemoryRemote)
+  ctx.effect(() => disposeRemote, 'mindspace-session-memory: remote')
   const ns = 'settings.sessionMemory'
   ctx.effect(() => ctx.locale.register(ns, { zh, en }), 'mindspace-session-memory: dictionaries')
   const t = ctx.locale.bind(ns) as SessionMemorySectionInjected['t']
-  // Resolve the namespace only after this plugin has mounted it.  Accessing
-  // ctx.remote.sessionMemory inside the slot callback is rejected by the
-  // runtime's dependency guard because this plugin intentionally does not
-  // declare its own Remote as a boot prerequisite.
-    const remote = ctx.get('remote.sessionMemory') as SessionMemorySectionInjected['remote']
-    if (remote === undefined) throw new Error('mindspace-session-memory: mounted Remote namespace is unavailable')
-    const commands = ctx.get('remote.commands') as SessionMemorySectionInjected['commands']
+  const remote = ctx.get('remote.mindspaceSessionMemory') as SessionMemorySectionInjected['remote']
+  if (remote === undefined) throw new Error('mindspace-session-memory: Remote mount did not publish its namespace')
+  const commands = ctx.get('remote.commands') as SessionMemorySectionInjected['commands']
   ctx.slots.inject('settings.section', () => ctx.slots.register({
     name: 'settings.section', id: 'personalization', order: 20, label: () => t('nav'),
     inject: (): SessionMemorySectionInjected => ({

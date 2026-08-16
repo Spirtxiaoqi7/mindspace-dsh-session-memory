@@ -147,8 +147,8 @@ export const TYPERT_REMOTE = {
   descriptors: [
     {
       id: 'mindspace-dsh-session-memory#sessionMemory/get',
-      service: 'sessionMemory',
-      namespace: 'sessionMemory',
+      service: 'mindspaceSessionMemory',
+      namespace: 'mindspaceSessionMemory',
       method: 'get',
       invocation: { kind: 'direct' },
       scope: {
@@ -177,8 +177,8 @@ export const TYPERT_REMOTE = {
     },
     {
       id: 'mindspace-dsh-session-memory#sessionMemory/replace',
-      service: 'sessionMemory',
-      namespace: 'sessionMemory',
+      service: 'mindspaceSessionMemory',
+      namespace: 'mindspaceSessionMemory',
       method: 'replace',
       invocation: { kind: 'direct' },
       scope: {
@@ -216,14 +216,14 @@ export const TYPERT_REMOTE = {
       sourceLocation: {"file":"packages/memory/session-memory-governance/src/index.ts","line":378,"column":9},
     },
     {
-      id: 'mindspace-dsh-session-memory#sessionMemory/getCompactionPolicy', service: 'sessionMemory', namespace: 'sessionMemory', method: 'getCompactionPolicy', invocation: { kind: 'direct' },
+      id: 'mindspace-dsh-session-memory#sessionMemory/getCompactionPolicy', service: 'mindspaceSessionMemory', namespace: 'mindspaceSessionMemory', method: 'getCompactionPolicy', invocation: { kind: 'direct' },
       scope: { context: 'agent', wire: 'agentId' },
       parameters: [{ name: 'agent', wire: 'agentId', source: 'lookup', lookup: 'agent', codec: { mode: 'strict', typeSymbol: '@deepseek-ai/dsh-session/types#SessionId', schema: _deepseek_ai_dsh_session_memory_governance_sessionMemory_get_parameter_0$schema } }],
       result: { mode: 'strict', typeSymbol: 'mindspace-dsh-session-memory/client#ContextCompactionPolicy', schema: _mindspace_dsh_session_memory_sessionMemory_compactionPolicy$schema },
       sourceLocation: {"file":"src/memory/index.ts","line":396,"column":3},
     },
     {
-      id: 'mindspace-dsh-session-memory#sessionMemory/setCompactionPolicy', service: 'sessionMemory', namespace: 'sessionMemory', method: 'setCompactionPolicy', invocation: { kind: 'direct' },
+      id: 'mindspace-dsh-session-memory#sessionMemory/setCompactionPolicy', service: 'mindspaceSessionMemory', namespace: 'mindspaceSessionMemory', method: 'setCompactionPolicy', invocation: { kind: 'direct' },
       scope: { context: 'agent', wire: 'agentId' },
       parameters: [
         { name: 'agent', wire: 'agentId', source: 'lookup', lookup: 'agent', codec: { mode: 'strict', typeSymbol: '@deepseek-ai/dsh-session/types#SessionId', schema: _deepseek_ai_dsh_session_memory_governance_sessionMemory_get_parameter_0$schema } },

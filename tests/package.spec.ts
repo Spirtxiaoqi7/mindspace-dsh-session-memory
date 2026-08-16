@@ -10,9 +10,6 @@ describe('installable DSH bundle', () => {
     expect(manifest.dsh.bundle.patch).toBe('./cordis.patch.yml')
     expect(manifest.dsh.client.platform).toBe('web')
     expect(manifest.exports['.']).toBe('./lib/index.js')
-    // Hand-written strict descriptors are registered by the service itself;
-    // exporting ./typert would make the automatic loader register the same
-    // Remote package a second time.
     expect(manifest.exports['./typert']).toBeUndefined()
   })
 
@@ -33,9 +30,9 @@ describe('installable DSH bundle', () => {
     expect(typert).toContain('package: "mindspace-dsh-session-memory"')
   })
 
-  it('does not wait for its own Remote before mounting it', () => {
+  it('mounts its isolated Remote once without waiting for itself', () => {
     const clientSource = readFileSync(resolve(root, 'src/client/index.ts'), 'utf8')
     expect(clientSource).toContain("export const inject = ['slots', 'locale', 'remote']")
-    expect(clientSource).not.toMatch(/export const inject = \[[^\]]*remote\.sessionMemory/)
+    expect(clientSource).toContain('ctx.remote.$mount(sessionMemoryRemote)')
   })
 })
