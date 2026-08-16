@@ -228,7 +228,7 @@ export function SessionMemorySection({ useSessions, remote, t }: SessionMemorySe
         onChange={(assistantInstructions) => { setDraft({ ...draft, assistantInstructions }) }}
         t={t}
       />
-      <section className={css.card}><h3>{t('relationship')}</h3>
+      <section className={css.card}><div className={css.cardTitle}><div><h3>{t('relationship')}</h3><p>{t('relationshipHint')}</p></div></div>
         <div className={css.twoColumn}>
           <label><span>{t('role')}</span><input value={draft.relationship?.role ?? ''} onChange={(event) => {
             setDraft({ ...draft, relationship: { role: event.target.value, mission: draft.relationship?.mission ?? '', guidance: draft.relationship?.guidance ?? '' } })
@@ -240,6 +240,10 @@ export function SessionMemorySection({ useSessions, remote, t }: SessionMemorySe
         <label><span>{t('guidance')}</span><textarea rows={3} value={draft.relationship?.guidance ?? ''} onChange={(event) => {
           setDraft({ ...draft, relationship: { role: draft.relationship?.role ?? '', mission: draft.relationship?.mission ?? '', guidance: event.target.value } })
         }} /></label>
+        {draft.relationship !== null && draft.relationship.role.trim().length > 0 && draft.relationship.mission.trim().length > 0 && <div className={css.promptPreview}>
+          <span>{t('identityPreview')}</span>
+          <pre>{`You are ${draft.relationship.role.trim()} in this conversation.\nYour primary mission is: ${draft.relationship.mission.trim()}.${draft.relationship.guidance.trim().length === 0 ? '' : `\nSession guidance: ${draft.relationship.guidance.trim()}.`}\nThis user-assigned session mission is authoritative for your role and response stance in this conversation.`}</pre>
+        </div>}
         <button className={css.subtleAction} type="button" onClick={() => { setDraft({ ...draft, relationship: null }) }}>{t('clearRelationship')}</button>
       </section>
       <section className={css.card}><div className={css.cardTitle}><div>

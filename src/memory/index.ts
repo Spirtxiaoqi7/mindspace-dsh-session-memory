@@ -22,7 +22,7 @@ import {
   mergeAssistantIdentity,
   mergeExtraction,
 } from './extraction.ts'
-import { renderSessionMemory } from './render.ts'
+import { renderSessionMemory, renderSessionMissionIdentity } from './render.ts'
 import type {
   ReplaceSessionMemoryRequest,
   SessionMemoryActivity,
@@ -53,7 +53,7 @@ export {
   parseExtraction,
   turnExtractionInput,
 } from './extraction.ts'
-export { renderSessionMemory } from './render.ts'
+export { renderSessionMemory, renderSessionMissionIdentity } from './render.ts'
 
 export interface Config {
   readonly maxTextBytes?: number
@@ -555,6 +555,14 @@ export class SessionMemoryService extends TypertRemoteService {
   private installPrompt(agent: Agent): void {
     if (this.installedAgents.has(agent)) return
     this.installedAgents.add(agent)
+    // Shadow only the agent-scoped identity slot. Do not use `complete`, which
+    // would discard Harness Web, tool, and safety sections from the request.
+    agent.ctx.systemPrompt.section({
+      name: 'harness:identity',
+      order: -100,
+      text: () => renderSessionMissionIdentity(foldSessionMemory(agent.session.events))
+        ?? 'You are an AI agent powered by DeepSeek Harness.',
+    })
     agent.ctx.systemPrompt.section({
       name: 'session-memory:personalization',
       order: 10,

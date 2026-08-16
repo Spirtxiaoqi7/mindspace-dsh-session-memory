@@ -20,6 +20,9 @@
 .switch { flex-direction: row !important; align-items: center; white-space: nowrap; }
 .switch input { width: auto; margin: 0; }
 .twoColumn { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.promptPreview { padding: 11px 12px; border: 1px solid color-mix(in srgb, var(--dsw-alias-button-primary-fill) 35%, var(--dsw-alias-border-l2)); border-radius: 10px; background: color-mix(in srgb, var(--dsw-alias-button-primary-fill) 7%, var(--dsw-alias-bg-secondary)); }
+.promptPreview > span { color: var(--dsw-alias-label-tertiary); font-size: 12px; }
+.promptPreview pre { margin: 7px 0 0; white-space: pre-wrap; overflow-wrap: anywhere; font: 12px/1.6 ui-monospace, SFMono-Regular, Consolas, monospace; color: var(--dsw-alias-label-primary); }
 .card button, .footer button { min-height: 32px; padding: 0 12px; border: 1px solid var(--dsw-alias-border-l2); border-radius: 16px; background: transparent; color: var(--dsw-alias-label-primary); cursor: pointer; }
 .card button:disabled { cursor: default; opacity: .52; }
 .addGroupButton, .subtleAction { align-self: flex-start; }
