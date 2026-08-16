@@ -78,6 +78,13 @@ const _deepseek_ai_dsh_session_memory_governance_sessionMemory_replace_parameter
   'enabled': z.boolean().readonly(),
   'text': z.string().readonly(),
 })]).readonly(),
+  'compactionPolicy': z.object({
+  'enabled': z.boolean().readonly(),
+  'thresholdRatio': z.number().readonly(),
+  'retainTokens': z.number().readonly(),
+  'maxTokens': z.number().readonly(),
+  'updatedAt': z.number().readonly(),
+}).readonly(),
 })
 const _deepseek_ai_dsh_session_memory_governance_sessionMemory_replace_result$schema = z.union([z.object({
   'ok': z.literal(true).readonly(),

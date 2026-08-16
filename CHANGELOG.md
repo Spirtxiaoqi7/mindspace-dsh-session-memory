@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.2.9 - 2026-08-16
+
+- Added a per-session context-compaction policy: enable state, trigger ratio,
+  retained recent context, and summary limit are stored as durable session events.
+- Added an editable settings card with a trigger slider and an explicit
+  “compact now” action for the active conversation.
+- Automatic compaction reads the session policy without incorporating system,
+  tool, relationship, roleplay, or personalization prompt layers into the
+  summary.
+- Tightened the summarizer instruction to preserve durable conversation facts
+  while dropping greetings, repeated material, and tool-log noise.
+
 ## 0.2.7
 
 - Make clean DSH Web profile installation self-contained by disabling the

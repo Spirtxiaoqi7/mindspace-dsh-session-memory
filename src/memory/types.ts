@@ -60,6 +60,15 @@ export interface SessionMemoryDocument {
   readonly updatedAt: number
 }
 
+/** User-owned native context-compaction controls, isolated to one session. */
+export interface ContextCompactionPolicy {
+  readonly enabled: boolean
+  readonly thresholdRatio: number
+  readonly retainTokens: number
+  readonly maxTokens: number
+  readonly updatedAt: number
+}
+
 /** Public read view. DSH compaction remains an internal DSH concern. */
 export interface SessionMemoryView {
   readonly document: SessionMemoryDocument
@@ -74,6 +83,7 @@ export interface ReplaceSessionMemoryRequest {
   readonly assistantInstructions: readonly SessionMemoryItem[]
   readonly relationship: SessionRelationship | null
   readonly roleplayPreset: SessionRoleplayPreset | null
+  readonly compactionPolicy: ContextCompactionPolicy
 }
 
 /** Stable failure returned across the Remote boundary. */

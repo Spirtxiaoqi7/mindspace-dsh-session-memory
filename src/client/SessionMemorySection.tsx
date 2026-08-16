@@ -7,9 +7,14 @@ import type {
   SessionMemoryItem,
   SessionMemoryMutationResult,
   SessionMemoryView,
+  ContextCompactionPolicy,
 } from '../memory/types.ts'
 import type { SessionMemoryKey } from './locales.ts'
 import css from './SessionMemorySection.module.css'
+
+const DEFAULT_COMPACTION_POLICY: ContextCompactionPolicy = {
+  enabled: true, thresholdRatio: 0.164, retainTokens: 64_000, maxTokens: 6_000, updatedAt: 0,
+}
 
 type RemoteResult<T> =
   | { readonly ok: true; readonly value: T }
@@ -20,8 +25,13 @@ interface SessionMemoryRemote {
   replace(agentId: never, request: ReplaceSessionMemoryRequest): Promise<RemoteResult<SessionMemoryMutationResult>>
 }
 
+interface CommandsRemote {
+  execute(agentId: never, line: string): Promise<{ readonly ok: boolean; readonly error?: { readonly message: string } }>
+}
+
 export interface SessionMemorySectionInjected {
   remote: SessionMemoryRemote
+  commands?: CommandsRemote
   t: (key: SessionMemoryKey) => string
 }
 
@@ -34,6 +44,7 @@ interface EditableDocument {
   assistantInstructions: SessionMemoryItem[]
   relationship: SessionMemoryView['document']['relationship']
   roleplayPreset: SessionMemoryView['document']['roleplayPreset']
+  compactionPolicy: ContextCompactionPolicy
 }
 
 function item(text = ''): SessionMemoryItem {
@@ -121,7 +132,7 @@ function Activity({ records, t }: { records: readonly SessionMemoryActivity[]; t
 }
 
 /** Render and mutate one selected session's memory document. */
-export function SessionMemorySection({ useSessions, remote, t }: SessionMemorySectionProps) {
+export function SessionMemorySection({ useSessions, remote, commands, t }: SessionMemorySectionProps) {
   if (remote === undefined || t === undefined) return null
   const sessions = useSessions(state => state)
   const [selected, setSelected] = useState<string | undefined>(sessions.current ?? sessions.ids[0])
@@ -149,6 +160,7 @@ export function SessionMemorySection({ useSessions, remote, t }: SessionMemorySe
         assistantInstructions: [...next.document.assistantInstructions].slice(0, 3),
         relationship: next.document.relationship,
         roleplayPreset: next.document.roleplayPreset,
+        compactionPolicy: DEFAULT_COMPACTION_POLICY,
       })
       setStatus('')
     } catch (error) { setStatus(error instanceof Error ? error.message : String(error)) }
@@ -167,6 +179,7 @@ export function SessionMemorySection({ useSessions, remote, t }: SessionMemorySe
       assistantInstructions: draft.assistantInstructions,
       relationship: draft.relationship,
       roleplayPreset: draft.roleplayPreset,
+      compactionPolicy: draft.compactionPolicy,
     }
     try {
       const response = await remote.replace(selected as never, request)
@@ -190,6 +203,25 @@ export function SessionMemorySection({ useSessions, remote, t }: SessionMemorySe
       </select>
     </label>
     {draft !== undefined && <>
+      <section className={css.card} data-context-compaction>
+        <div className={css.cardTitle}><div><h3>上下文压缩</h3><p>仅压缩该会话较早的对话记忆；用户画像、关系使命、扮演预设和系统提示不会进入摘要。</p></div>
+          <label className={css.switch}><input type="checkbox" checked={draft.compactionPolicy.enabled} onChange={(event) => setDraft({ ...draft, compactionPolicy: { ...draft.compactionPolicy, enabled: event.target.checked } })} /><span>{draft.compactionPolicy.enabled ? '已启用' : '已关闭'}</span></label>
+        </div>
+        <label><span>达到 {Math.round(draft.compactionPolicy.thresholdRatio * 1000) / 10}% 上下文时自动压缩</span><input type="range" min="5" max="80" step="0.1" value={draft.compactionPolicy.thresholdRatio * 100} onChange={(event) => setDraft({ ...draft, compactionPolicy: { ...draft.compactionPolicy, thresholdRatio: Number(event.target.value) / 100 } })} /></label>
+        <div className={css.twoColumn}>
+          <label><span>保留末尾原文（tokens）</span><input type="number" min="4096" step="1024" value={draft.compactionPolicy.retainTokens} onChange={(event) => setDraft({ ...draft, compactionPolicy: { ...draft.compactionPolicy, retainTokens: Math.max(4096, Number(event.target.value) || 4096) } })} /></label>
+          <label><span>摘要上限（tokens）</span><input type="number" min="512" max="8192" step="256" value={draft.compactionPolicy.maxTokens} onChange={(event) => setDraft({ ...draft, compactionPolicy: { ...draft.compactionPolicy, maxTokens: Math.min(8192, Math.max(512, Number(event.target.value) || 512)) } })} /></label>
+        </div>
+        <p>默认 V4：约 164K 触发、保留 64K、摘要最多 6000 tokens。保存后下一轮请求即时按此会话策略执行。</p>
+        <button className={css.subtleAction} type="button" disabled={selected === undefined || commands === undefined} onClick={async () => {
+          if (selected === undefined || commands === undefined) return
+          setStatus('正在压缩较早的对话记忆…')
+          try {
+            const result = await commands.execute(selected as never, '/compact')
+            setStatus(result.ok ? '已提交主动压缩；完成后可在对话中的压缩节点查看摘要。' : (result.error?.message ?? '主动压缩未执行'))
+          } catch (error) { setStatus(error instanceof Error ? error.message : String(error)) }
+        }}>立即压缩当前会话</button>
+      </section>
       <section className={`${css.card} ${css.profileCard}`}>
         <div className={css.cardTitle}>
           <div><h3>{t('profile')}</h3><p>{t('profileHint')}</p></div>

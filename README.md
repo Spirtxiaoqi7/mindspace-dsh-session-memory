@@ -16,6 +16,22 @@ personalization memory. It keeps continuity and user control in the same place:
 - category-based conflict replacement with stable card ids and a visible append/merge/replace/skip audit trail;
 - a one-time, optional role/purpose/style question when a new session has no personalization.
 
+## 0.2.9: Session-scoped context compaction
+
+The Memory Center now exposes a session-isolated context-compaction policy. Users can
+enable it, set the trigger ratio, retained recent context, and summary limit, or run a
+manual compaction before the threshold is reached. The policy is persisted as session
+events and never changes another conversation.
+
+- Only conversation messages are summarized; system, tool, personalization,
+  relationship-mission, and roleplay layers are excluded.
+- The prior summary is included as input to avoid losing durable context across
+  repeated compactions.
+- The compaction prompt prioritizes facts, decisions, constraints, open work,
+  and reusable conclusions while dropping greetings, repetition, and tool logs.
+- DSH remains the compaction executor; this plugin supplies the session policy
+  and the visible user controls.
+
 This is a community plugin and is not an official DeepSeek project. The repository
 artwork is supplied by the project owner and is used only to identify this repository.
 

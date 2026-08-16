@@ -32,12 +32,14 @@ export async function apply(ctx: ClientContext): Promise<void> {
   // ctx.remote.sessionMemory inside the slot callback is rejected by the
   // runtime's dependency guard because this plugin intentionally does not
   // declare its own Remote as a boot prerequisite.
-  const remote = ctx.get('remote.sessionMemory') as SessionMemorySectionInjected['remote']
-  if (remote === undefined) throw new Error('mindspace-session-memory: mounted Remote namespace is unavailable')
+    const remote = ctx.get('remote.sessionMemory') as SessionMemorySectionInjected['remote']
+    if (remote === undefined) throw new Error('mindspace-session-memory: mounted Remote namespace is unavailable')
+    const commands = ctx.get('remote.commands') as SessionMemorySectionInjected['commands']
   ctx.slots.inject('settings.section', () => ctx.slots.register({
     name: 'settings.section', id: 'personalization', order: 20, label: () => t('nav'),
     inject: (): SessionMemorySectionInjected => ({
       remote,
+      commands,
       t,
     }),
   }, SessionMemorySection))

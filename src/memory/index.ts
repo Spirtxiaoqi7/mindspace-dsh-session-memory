@@ -13,7 +13,7 @@ import { defineTool } from '@deepseek-ai/dsh-tools'
 import type { JsonValue } from '@deepseek-ai/dsh-session'
 import { Remote, TypertRemoteService } from '@deepseek-ai/dsh-typert-protocol'
 import type { SessionMemoryFoldState } from './fold.ts'
-import { applySessionMemoryEvent, emptySessionMemoryFoldState, foldSessionMemory, sessionMemoryView } from './fold.ts'
+import { applySessionMemoryEvent, emptySessionMemoryFoldState, foldCompactionPolicy, foldSessionMemory, sessionMemoryView } from './fold.ts'
 import {
   DEFAULT_PROFILE_CHARACTERS,
   DEFAULT_RELATIONSHIP_MISSION,
@@ -360,9 +360,10 @@ export class SessionMemoryService extends TypertRemoteService {
               expectedRevision: current.revision,
               userProfile: merged.document.userProfile,
               preferences: merged.document.preferences,
-              assistantInstructions: merged.document.assistantInstructions,
-              relationship: merged.document.relationship,
-              roleplayPreset: merged.document.roleplayPreset,
+            assistantInstructions: merged.document.assistantInstructions,
+            relationship: merged.document.relationship,
+            roleplayPreset: merged.document.roleplayPreset,
+            compactionPolicy: foldCompactionPolicy(agent.session.events),
             }, merged.document.revision, merged.document.updatedAt, this.resolved)
             if ('code' in validated) {
               ctx.logger.warn(`session-memory extraction rejected for session ${agent.id}: ${validated.message}`)
@@ -405,8 +406,19 @@ export class SessionMemoryService extends TypertRemoteService {
     const resolved = resolveDocument(request, current.revision + 1, time, this.resolved)
     if ('code' in resolved) return { ok: false, error: resolved }
     const changes = auditManualChange(current, resolved, time, sourceSeqs)
-    if (changes.length === 0) return { ok: true, value: foldSessionMemory(agent.session.events) }
-    agent.session.append('session-memory/change', { version: 2, operation: 'replace', document: resolved, changes }, { ignorable: true })
+    const currentPolicy = foldCompactionPolicy(agent.session.events)
+    const policyChanged = JSON.stringify(currentPolicy) !== JSON.stringify(request.compactionPolicy)
+    if (changes.length === 0 && !policyChanged) return { ok: true, value: foldSessionMemory(agent.session.events) }
+    if (changes.length > 0) {
+      agent.session.append('session-memory/change', { version: 2, operation: 'replace', document: resolved, changes }, { ignorable: true })
+    }
+    if (policyChanged) {
+      agent.session.append('mindspace-compaction/policy' as never, {
+        version: 1,
+        ...request.compactionPolicy,
+        updatedAt: Date.now(),
+      } as never, { ignorable: true })
+    }
     await this.ctx.sessions.flush(agent.session)
     return { ok: true, value: foldSessionMemory(agent.session.events) }
   }
@@ -416,6 +428,36 @@ export class SessionMemoryService extends TypertRemoteService {
   }
 
   private registerTools(): void {
+    this.ctx.tools.register(defineTool({
+      name: 'configure_context_compaction',
+      description: 'Configure this conversation only: automatic context compaction starts at the chosen share of the routed model context window, preserves the newest tail, and writes a maximum-size editable checkpoint. Use this when the user asks to control context length or compaction. This is not personalization memory and does not alter profile, relationship, or roleplay.',
+      parameters: {
+        enabled: { type: 'boolean', required: true },
+        threshold_percent: { type: 'number', description: '5 through 80. At this share of the model context window, automatic compaction begins.' },
+        retain_tokens: { type: 'number', description: 'Newest raw context to preserve, at least 4096. Default 64000.' },
+        summary_max_tokens: { type: 'number', description: 'Maximum checkpoint size, 512 through 8192. Default 6000.' },
+      },
+      output: { schema: { type: 'json' }, render: (_args, value) => [{ type: 'text', text: JSON.stringify(value) }] },
+      execute: (args, exec): JsonValue => {
+        if (exec.agent === undefined) throw new Error('configure_context_compaction requires an Agent-backed session')
+        const percent = args.threshold_percent ?? 16.4
+        const retainTokens = args.retain_tokens ?? 64_000
+        const maxTokens = args.summary_max_tokens ?? 6_000
+        if (!Number.isFinite(percent) || percent < 5 || percent > 80) throw new Error('threshold_percent must be between 5 and 80')
+        if (!Number.isInteger(retainTokens) || retainTokens < 4096) throw new Error('retain_tokens must be an integer >= 4096')
+        if (!Number.isInteger(maxTokens) || maxTokens < 512 || maxTokens > 8192) throw new Error('summary_max_tokens must be an integer between 512 and 8192')
+        const policy = {
+          version: 1 as const,
+          enabled: args.enabled,
+          thresholdRatio: percent / 100,
+          retainTokens,
+          maxTokens,
+          updatedAt: Date.now(),
+        }
+        exec.agent.session.append('mindspace-compaction/policy' as never, policy as never, { ignorable: true })
+        return policy as unknown as JsonValue
+      },
+    }))
     this.ctx.tools.register(defineTool({
       name: 'get_session_memory',
       description: 'Read the current compact profile, categorized cards, relationship, preset, and change activity.',
@@ -480,6 +522,7 @@ export class SessionMemoryService extends TypertRemoteService {
           assistantInstructions: [...current.assistantInstructions],
           relationship: current.relationship,
           roleplayPreset: current.roleplayPreset,
+          compactionPolicy: foldCompactionPolicy(exec.agent.session.events),
         }
         if (args.action === 'set_user_profile') {
           Object.assign(request, {

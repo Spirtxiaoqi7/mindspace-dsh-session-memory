@@ -2,11 +2,16 @@
 
 import type { SessionEvent } from '@deepseek-ai/dsh-session'
 import type { LegacySessionMemoryDocumentV1 } from './domain.ts'
-import type { SessionMemoryDocument, SessionMemoryItem, SessionMemoryView } from './types.ts'
+import type { ContextCompactionPolicy, SessionMemoryDocument, SessionMemoryItem, SessionMemoryView } from './types.ts'
+
+export const DEFAULT_COMPACTION_POLICY: ContextCompactionPolicy = Object.freeze({
+  enabled: true, thresholdRatio: 0.164, retainTokens: 64_000, maxTokens: 6_000, updatedAt: 0,
+})
 
 export interface SessionMemoryFoldState {
   document: SessionMemoryDocument
   memoryActivity: SessionMemoryView['memoryActivity']
+  compactionPolicy: ContextCompactionPolicy
 }
 
 /** Empty state before a session has personalization edits. */
@@ -125,11 +130,17 @@ export function migrateLegacyDocument(document: LegacySessionMemoryDocumentV1): 
 
 /** Initial replay state. */
 export function emptySessionMemoryFoldState(): SessionMemoryFoldState {
-  return { document: emptySessionMemory(), memoryActivity: [] }
+  return { document: emptySessionMemory(), memoryActivity: [], compactionPolicy: DEFAULT_COMPACTION_POLICY }
 }
 
 /** Apply one relevant event without scanning prior history. */
 export function applySessionMemoryEvent(state: SessionMemoryFoldState, event: SessionEvent): SessionMemoryFoldState {
+  if ((event as { type: string }).type === 'mindspace-compaction/policy') {
+    const value = (event as unknown as { data: ContextCompactionPolicy }).data
+    if (value.enabled !== undefined && Number.isFinite(value.thresholdRatio) && Number.isInteger(value.retainTokens) && Number.isInteger(value.maxTokens)) {
+      return { ...state, compactionPolicy: value }
+    }
+  }
   if (event.type !== 'session-memory/change') return state
   if (event.data.version === 1) {
     return { ...state, document: migrateLegacyDocument(event.data.document as LegacySessionMemoryDocumentV1) }
@@ -143,6 +154,13 @@ export function applySessionMemoryEvent(state: SessionMemoryFoldState, event: Se
 /** Public view of one internal fold state. */
 export function sessionMemoryView(state: SessionMemoryFoldState): SessionMemoryView {
   return { document: state.document, memoryActivity: state.memoryActivity }
+}
+
+/** Read the policy without widening the established sessionMemory/get wire contract. */
+export function foldCompactionPolicy(events: readonly SessionEvent[]): ContextCompactionPolicy {
+  let state = emptySessionMemoryFoldState()
+  for (const event of events) state = applySessionMemoryEvent(state, event)
+  return state.compactionPolicy
 }
 
 /** Fold one log into its latest editable document and activity ledger. */
