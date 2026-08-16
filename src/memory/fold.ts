@@ -8,6 +8,37 @@ export const DEFAULT_COMPACTION_POLICY: ContextCompactionPolicy = Object.freeze(
   enabled: true, thresholdRatio: 0.164, retainTokens: 64_000, maxTokens: 6_000, updatedAt: 0,
 })
 
+/**
+ * Produce the exact plain-data shape used on the Typert Remote boundary.
+ *
+ * Early preview events did not all carry `updatedAt`.  They remain useful
+ * historical settings, but must never make the read-only settings screen fail
+ * its strict result validation.
+ */
+export function normalizeCompactionPolicy(value: unknown): ContextCompactionPolicy {
+  const candidate = value !== null && typeof value === 'object'
+    ? value as Partial<ContextCompactionPolicy>
+    : {}
+  const thresholdRatio = Number.isFinite(candidate.thresholdRatio)
+    && candidate.thresholdRatio! >= 0.05 && candidate.thresholdRatio! <= 0.8
+    ? candidate.thresholdRatio!
+    : DEFAULT_COMPACTION_POLICY.thresholdRatio
+  const retainTokens = Number.isInteger(candidate.retainTokens) && candidate.retainTokens! >= 4096
+    ? candidate.retainTokens!
+    : DEFAULT_COMPACTION_POLICY.retainTokens
+  const maxTokens = Number.isInteger(candidate.maxTokens)
+    && candidate.maxTokens! >= 512 && candidate.maxTokens! <= 8192
+    ? candidate.maxTokens!
+    : DEFAULT_COMPACTION_POLICY.maxTokens
+  return {
+    enabled: typeof candidate.enabled === 'boolean' ? candidate.enabled : DEFAULT_COMPACTION_POLICY.enabled,
+    thresholdRatio,
+    retainTokens,
+    maxTokens,
+    updatedAt: Number.isFinite(candidate.updatedAt) ? candidate.updatedAt! : 0,
+  }
+}
+
 export interface SessionMemoryFoldState {
   document: SessionMemoryDocument
   memoryActivity: SessionMemoryView['memoryActivity']
@@ -136,9 +167,11 @@ export function emptySessionMemoryFoldState(): SessionMemoryFoldState {
 /** Apply one relevant event without scanning prior history. */
 export function applySessionMemoryEvent(state: SessionMemoryFoldState, event: SessionEvent): SessionMemoryFoldState {
   if ((event as { type: string }).type === 'mindspace-compaction/policy') {
-    const value = (event as unknown as { data: ContextCompactionPolicy }).data
-    if (value.enabled !== undefined && Number.isFinite(value.thresholdRatio) && Number.isInteger(value.retainTokens) && Number.isInteger(value.maxTokens)) {
-      return { ...state, compactionPolicy: value }
+    const value = (event as unknown as { data: unknown }).data
+    const normalized = normalizeCompactionPolicy(value)
+    if (value !== null && typeof value === 'object'
+      && 'enabled' in value && 'thresholdRatio' in value && 'retainTokens' in value && 'maxTokens' in value) {
+      return { ...state, compactionPolicy: normalized }
     }
   }
   if (event.type !== 'session-memory/change') return state
@@ -160,7 +193,7 @@ export function sessionMemoryView(state: SessionMemoryFoldState): SessionMemoryV
 export function foldCompactionPolicy(events: readonly SessionEvent[]): ContextCompactionPolicy {
   let state = emptySessionMemoryFoldState()
   for (const event of events) state = applySessionMemoryEvent(state, event)
-  return state.compactionPolicy
+  return normalizeCompactionPolicy(state.compactionPolicy)
 }
 
 /** Fold one log into its latest editable document and activity ledger. */

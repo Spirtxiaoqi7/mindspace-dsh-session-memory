@@ -151,10 +151,21 @@ export function SessionMemorySection({ useSessions, remote, commands, t }: Sessi
     if (selected === undefined) return
     setStatus(t('loading'))
     try {
-      const [response, policyResponse] = await Promise.all([remote.get(selected as never), remote.getCompactionPolicy(selected as never)])
+      // Personalization data and the optional compression controls are deliberately
+      // loaded independently: an old/invalid policy must never hide user memory.
+      const response = await remote.get(selected as never)
       if (!response.ok) throw new Error(`${response.error.code}: ${response.error.message}`)
-      if (!policyResponse.ok) throw new Error(`${policyResponse.error.code}: ${policyResponse.error.message}`)
       const next = response.value
+      let compactionPolicy = DEFAULT_COMPACTION_POLICY
+      let policyWarning = ''
+      try {
+        const policyResponse = await remote.getCompactionPolicy(selected as never)
+        if (!policyResponse.ok) throw new Error(`${policyResponse.error.code}: ${policyResponse.error.message}`)
+        compactionPolicy = policyResponse.value
+      } catch (error) {
+        const detail = error instanceof Error ? error.message : String(error)
+        policyWarning = `记忆已载入；上下文压缩设置暂不可用：${detail}`
+      }
       setView(next)
       setDraft({
         expectedRevision: next.document.revision,
@@ -163,9 +174,9 @@ export function SessionMemorySection({ useSessions, remote, commands, t }: Sessi
         assistantInstructions: [...next.document.assistantInstructions].slice(0, 3),
         relationship: next.document.relationship,
         roleplayPreset: next.document.roleplayPreset,
-        compactionPolicy: policyResponse.value,
+        compactionPolicy,
       })
-      setStatus('')
+      setStatus(policyWarning)
     } catch (error) { setStatus(error instanceof Error ? error.message : String(error)) }
   }
 
@@ -187,7 +198,16 @@ export function SessionMemorySection({ useSessions, remote, commands, t }: Sessi
       const response = await remote.replace(selected as never, request)
       if (!response.ok) { setStatus(response.error.message); return }
       const result = response.value
-      if (!result.ok) { setStatus(result.error.code === 'stale-revision' ? t('stale') : result.error.message); return }
+      if (!result.ok) {
+        if (result.error.code === 'stale-revision') {
+          // Do not retry a whole-document replace against a moving extractor.
+          // Reload is deliberately lossless for persisted memory: the user sees
+          // the current document instead of overwriting it with an old draft.
+          await load()
+          setStatus('记忆已在其他位置变化，已重新载入最新版本；未覆盖现有记忆。')
+        } else setStatus(result.error.message)
+        return
+      }
       setView(result.value)
       setDraft({ ...draft, expectedRevision: result.value.document.revision, userProfile: result.value.document.userProfile })
       setStatus(t('saved'))

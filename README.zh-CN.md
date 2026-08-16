@@ -109,6 +109,11 @@ dsh plugin --profile web remove mindspace-dsh-session-memory
 首版面向公开的 DeepSeek Harness `0.1.0-rc` 系列以及 Node 22.19+ / Node 24+。
 Harness 当前仍是开发者预览，上游破坏性修改可能需要同步更新插件。
 
+近期 DSH 本体也带有实验性的 `session-memory` 字段和对应设置入口。本插件的
+profile patch 会先关闭这些内置行，再由本插件作为 Remote、事件投影、提示词接入与
+可编辑 UI 的唯一所有者。后续开发必须保持每一套 session-memory schema / Remote
+namespace 只有一个所有者；同时启用两套实现会造成重复注册或竞争写入。
+
 ## 开发
 
 ```sh

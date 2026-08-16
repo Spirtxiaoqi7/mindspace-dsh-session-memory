@@ -140,6 +140,13 @@ The initial release targets the public DeepSeek Harness `0.1.0-rc` family and No
 22.19+ or Node 24+. Harness is currently a developer preview; breaking upstream
 changes may require a plugin update.
 
+Recent DSH builds also ship experimental in-tree `session-memory` fields and a
+matching settings entry. This plugin deliberately disables those in-tree rows in
+its profile patch before installing its own single owner for the Remote, event
+projection, prompt integration, and editable UI. Future extensions must keep one
+owner per session-memory schema/Remote namespace; enabling both implementations
+causes duplicate registration or competing writers.
+
 ## Development
 
 ```sh

@@ -15,7 +15,7 @@ import type { JsonValue } from '@deepseek-ai/dsh-session'
 import { Remote, TypertRemoteService } from '@deepseek-ai/dsh-typert-protocol'
 import { TYPERT } from '../generated/typert.host.js'
 import type { SessionMemoryFoldState } from './fold.ts'
-import { applySessionMemoryEvent, emptySessionMemoryFoldState, foldCompactionPolicy, foldSessionMemory, sessionMemoryView } from './fold.ts'
+import { applySessionMemoryEvent, emptySessionMemoryFoldState, foldCompactionPolicy, foldSessionMemory, normalizeCompactionPolicy, sessionMemoryView } from './fold.ts'
 import {
   DEFAULT_PROFILE_CHARACTERS,
   DEFAULT_RELATIONSHIP_MISSION,
@@ -401,7 +401,8 @@ export class SessionMemoryService extends TypertRemoteService {
   @Remote('getCompactionPolicy')
   getCompactionPolicy(agent: Agent): ContextCompactionPolicy {
     this.assertLive(agent)
-    return foldCompactionPolicy(agent.session.events)
+    // Always return a fresh JSON-safe, complete object for the strict Remote codec.
+    return normalizeCompactionPolicy(foldCompactionPolicy(agent.session.events))
   }
 
   /** Persist one session's policy immediately without rewriting its memory document. */
