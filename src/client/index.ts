@@ -18,12 +18,22 @@ export const inject = ['slots', 'locale', 'remote']
 
 /** Mount the plugin-owned Remote, then register the Personalization section. */
 export async function apply(ctx: ClientContext): Promise<void> {
-  try {
-    const disposeRemote = await ctx.remote.$mount(sessionMemoryRemote)
-    ctx.effect(() => disposeRemote, 'mindspace-session-memory: remote')
-  } catch (error: unknown) {
-    const message = error instanceof Error ? error.message : String(error)
-    if (!message.includes('sessionMemory/get is already mounted')) throw error
+  // A Web client may remain alive across a plugin upgrade. The gateway mounts a
+  // contribution atomically, so a legacy get/replace endpoint would otherwise
+  // reject the whole batch and leave newly added methods unavailable. Mounting
+  // each strict generated descriptor lets existing endpoints stay owned by the
+  // old fiber while newly introduced endpoints become callable immediately.
+  for (const descriptor of sessionMemoryRemote.descriptors) {
+    try {
+      const disposeRemote = await ctx.remote.$mount({
+        ...sessionMemoryRemote,
+        descriptors: [descriptor],
+      })
+      ctx.effect(() => disposeRemote, `mindspace-session-memory: remote:${descriptor.method}`)
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error)
+      if (!message.includes(`${descriptor.namespace}/${descriptor.method} is already mounted`)) throw error
+    }
   }
   const ns = 'settings.sessionMemory'
   ctx.effect(() => ctx.locale.register(ns, { zh, en }), 'mindspace-session-memory: dictionaries')

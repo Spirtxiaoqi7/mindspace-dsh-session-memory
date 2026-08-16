@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.2.11 - 2026-08-16
+
+- Fixed live Web upgrades: each strict generated Remote descriptor now mounts
+  independently, so existing `get`/`replace` endpoints cannot block newly
+  introduced compaction-policy methods.
+
 ## 0.2.10 - 2026-08-16
 
 - Fixed the Memory Center save failure caused by putting context-compaction
