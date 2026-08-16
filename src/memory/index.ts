@@ -3,6 +3,7 @@
 import { Buffer } from 'node:buffer'
 import { randomUUID } from 'node:crypto'
 import type { Context } from '@deepseek-ai/cordis'
+import type {} from '@deepseek-ai/dsh-typert-registry'
 import z from '@deepseek-ai/schemastery'
 import { z as zod } from 'zod'
 import type { Agent } from '@deepseek-ai/dsh-agent'
@@ -12,6 +13,7 @@ import type {} from '@deepseek-ai/dsh-session-projection'
 import { defineTool } from '@deepseek-ai/dsh-tools'
 import type { JsonValue } from '@deepseek-ai/dsh-session'
 import { Remote, TypertRemoteService } from '@deepseek-ai/dsh-typert-protocol'
+import { TYPERT } from '../generated/typert.host.js'
 import type { SessionMemoryFoldState } from './fold.ts'
 import { applySessionMemoryEvent, emptySessionMemoryFoldState, foldCompactionPolicy, foldSessionMemory, sessionMemoryView } from './fold.ts'
 import {
@@ -307,7 +309,7 @@ function auditManualChange(
 }
 
 export class SessionMemoryService extends TypertRemoteService {
-  static inject = ['agents', 'sessions', 'tools', 'systemPrompt']
+  static inject = ['agents', 'sessions', 'tools', 'systemPrompt', 'typert']
   static Config: z<Config> = z.object({
     maxTextBytes: z.number().step(1).min(1).default(4096),
     maxItemsPerSection: z.number().step(1).min(1).max(MAX_MEMORY_CARDS).default(MAX_MEMORY_CARDS),
@@ -321,6 +323,10 @@ export class SessionMemoryService extends TypertRemoteService {
 
   constructor(ctx: Context, config: Config = {}) {
     super(ctx, 'sessionMemory')
+    // This package owns hand-written strict descriptors. Register them exactly
+    // once from the service fiber instead of also exposing ./typert to the
+    // automatic loader, which would double-register the same Remote package.
+    ctx.typert.register(TYPERT)
     this.resolved = {
       maxTextBytes: config.maxTextBytes ?? 4096,
       maxItemsPerSection: Math.min(config.maxItemsPerSection ?? MAX_MEMORY_CARDS, MAX_MEMORY_CARDS),

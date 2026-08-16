@@ -10,7 +10,10 @@ describe('installable DSH bundle', () => {
     expect(manifest.dsh.bundle.patch).toBe('./cordis.patch.yml')
     expect(manifest.dsh.client.platform).toBe('web')
     expect(manifest.exports['.']).toBe('./lib/index.js')
-    expect(manifest.exports['./typert']).toBe('./lib/typert.js')
+    // Hand-written strict descriptors are registered by the service itself;
+    // exporting ./typert would make the automatic loader register the same
+    // Remote package a second time.
+    expect(manifest.exports['./typert']).toBeUndefined()
   })
 
   it('mounts one dual-face package-root row', () => {

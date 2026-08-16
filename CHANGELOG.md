@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.2.12 - 2026-08-16
+
+- Fixed duplicate Host Typert registration by using the documented manual
+  `ctx.typert.register()` ownership for the package's hand-written strict wire
+  schema and removing the competing automatic `./typert` loader export.
+
 ## 0.2.11 - 2026-08-16
 
 - Fixed live Web upgrades: each strict generated Remote descriptor now mounts

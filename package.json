@@ -1,6 +1,6 @@
 {
   "name": "mindspace-dsh-session-memory",
-  "version": "0.2.11",
+  "version": "0.2.12",
   "description": "Editable, session-isolated personalization memory for DeepSeek Harness",
   "type": "module",
   "license": "MIT",
@@ -25,7 +25,6 @@
     ".": "./lib/index.js",
     "./memory": "./lib/memory.js",
     "./client": "./lib/client.js",
-    "./typert": "./lib/typert.js",
     "./remote": "./lib/remote.js",
     "./package.json": "./package.json"
   },
