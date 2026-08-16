@@ -23,6 +23,8 @@ type RemoteResult<T> =
 interface SessionMemoryRemote {
   get(agentId: never): Promise<RemoteResult<SessionMemoryView>>
   replace(agentId: never, request: ReplaceSessionMemoryRequest): Promise<RemoteResult<SessionMemoryMutationResult>>
+  getCompactionPolicy(agentId: never): Promise<RemoteResult<ContextCompactionPolicy>>
+  setCompactionPolicy(agentId: never, policy: ContextCompactionPolicy): Promise<RemoteResult<ContextCompactionPolicy>>
 }
 
 interface CommandsRemote {
@@ -149,8 +151,9 @@ export function SessionMemorySection({ useSessions, remote, commands, t }: Sessi
     if (selected === undefined) return
     setStatus(t('loading'))
     try {
-      const response = await remote.get(selected as never)
+      const [response, policyResponse] = await Promise.all([remote.get(selected as never), remote.getCompactionPolicy(selected as never)])
       if (!response.ok) throw new Error(`${response.error.code}: ${response.error.message}`)
+      if (!policyResponse.ok) throw new Error(`${policyResponse.error.code}: ${policyResponse.error.message}`)
       const next = response.value
       setView(next)
       setDraft({
@@ -160,7 +163,7 @@ export function SessionMemorySection({ useSessions, remote, commands, t }: Sessi
         assistantInstructions: [...next.document.assistantInstructions].slice(0, 3),
         relationship: next.document.relationship,
         roleplayPreset: next.document.roleplayPreset,
-        compactionPolicy: DEFAULT_COMPACTION_POLICY,
+        compactionPolicy: policyResponse.value,
       })
       setStatus('')
     } catch (error) { setStatus(error instanceof Error ? error.message : String(error)) }
@@ -179,7 +182,6 @@ export function SessionMemorySection({ useSessions, remote, commands, t }: Sessi
       assistantInstructions: draft.assistantInstructions,
       relationship: draft.relationship,
       roleplayPreset: draft.roleplayPreset,
-      compactionPolicy: draft.compactionPolicy,
     }
     try {
       const response = await remote.replace(selected as never, request)
@@ -192,6 +194,17 @@ export function SessionMemorySection({ useSessions, remote, commands, t }: Sessi
     } catch (error) {
       setStatus(error instanceof Error ? error.message : String(error))
     }
+  }
+
+  const applyCompactionPolicy = async () => {
+    if (selected === undefined || draft === undefined) return
+    setStatus('正在应用上下文压缩设置…')
+    try {
+      const response = await remote.setCompactionPolicy(selected as never, draft.compactionPolicy)
+      if (!response.ok) { setStatus(response.error.message); return }
+      setDraft({ ...draft, compactionPolicy: response.value })
+      setStatus('上下文压缩设置已实时应用到当前会话。')
+    } catch (error) { setStatus(error instanceof Error ? error.message : String(error)) }
   }
 
   const profileLength = draft === undefined ? 0 : Array.from(`${draft.userProfile.confirmed}${draft.userProfile.inferred}`).length
@@ -212,7 +225,8 @@ export function SessionMemorySection({ useSessions, remote, commands, t }: Sessi
           <label><span>保留末尾原文（tokens）</span><input type="number" min="4096" step="1024" value={draft.compactionPolicy.retainTokens} onChange={(event) => setDraft({ ...draft, compactionPolicy: { ...draft.compactionPolicy, retainTokens: Math.max(4096, Number(event.target.value) || 4096) } })} /></label>
           <label><span>摘要上限（tokens）</span><input type="number" min="512" max="8192" step="256" value={draft.compactionPolicy.maxTokens} onChange={(event) => setDraft({ ...draft, compactionPolicy: { ...draft.compactionPolicy, maxTokens: Math.min(8192, Math.max(512, Number(event.target.value) || 512)) } })} /></label>
         </div>
-        <p>默认 V4：约 164K 触发、保留 64K、摘要最多 6000 tokens。保存后下一轮请求即时按此会话策略执行。</p>
+        <p>默认 V4：约 164K 触发、保留 64K、摘要最多 6000 tokens。应用后下一轮请求即时按此会话策略执行。</p>
+        <button className={css.subtleAction} type="button" onClick={() => void applyCompactionPolicy()}>应用压缩设置</button>
         <button className={css.subtleAction} type="button" disabled={selected === undefined || commands === undefined} onClick={async () => {
           if (selected === undefined || commands === undefined) return
           setStatus('正在压缩较早的对话记忆…')

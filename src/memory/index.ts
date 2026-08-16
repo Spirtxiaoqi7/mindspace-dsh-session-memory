@@ -24,6 +24,7 @@ import {
 } from './extraction.ts'
 import { renderSessionMemory, renderSessionMissionIdentity } from './render.ts'
 import type {
+  ContextCompactionPolicy,
   ReplaceSessionMemoryRequest,
   SessionMemoryActivity,
   SessionMemoryDocument,
@@ -363,7 +364,6 @@ export class SessionMemoryService extends TypertRemoteService {
             assistantInstructions: merged.document.assistantInstructions,
             relationship: merged.document.relationship,
             roleplayPreset: merged.document.roleplayPreset,
-            compactionPolicy: foldCompactionPolicy(agent.session.events),
             }, merged.document.revision, merged.document.updatedAt, this.resolved)
             if ('code' in validated) {
               ctx.logger.warn(`session-memory extraction rejected for session ${agent.id}: ${validated.message}`)
@@ -392,6 +392,32 @@ export class SessionMemoryService extends TypertRemoteService {
     return this.commit(agent, request, [])
   }
 
+  /** Read the compaction policy separately from editable personalization data. */
+  @Remote('getCompactionPolicy')
+  getCompactionPolicy(agent: Agent): ContextCompactionPolicy {
+    this.assertLive(agent)
+    return foldCompactionPolicy(agent.session.events)
+  }
+
+  /** Persist one session's policy immediately without rewriting its memory document. */
+  @Remote('setCompactionPolicy')
+  async setCompactionPolicy(agent: Agent, policy: ContextCompactionPolicy): Promise<ContextCompactionPolicy> {
+    this.assertLive(agent)
+    if (!Number.isFinite(policy.thresholdRatio) || policy.thresholdRatio < 0.05 || policy.thresholdRatio > 0.8) {
+      throw new Error('thresholdRatio must be between 0.05 and 0.8')
+    }
+    if (!Number.isInteger(policy.retainTokens) || policy.retainTokens < 4096) {
+      throw new Error('retainTokens must be an integer >= 4096')
+    }
+    if (!Number.isInteger(policy.maxTokens) || policy.maxTokens < 512 || policy.maxTokens > 8192) {
+      throw new Error('maxTokens must be an integer between 512 and 8192')
+    }
+    const next: ContextCompactionPolicy = { ...policy, updatedAt: Date.now() }
+    agent.session.append('mindspace-compaction/policy' as never, { version: 1, ...next } as never, { ignorable: true })
+    await this.ctx.sessions.flush(agent.session)
+    return next
+  }
+
   private async commit(
     agent: Agent,
     request: ReplaceSessionMemoryRequest,
@@ -406,18 +432,9 @@ export class SessionMemoryService extends TypertRemoteService {
     const resolved = resolveDocument(request, current.revision + 1, time, this.resolved)
     if ('code' in resolved) return { ok: false, error: resolved }
     const changes = auditManualChange(current, resolved, time, sourceSeqs)
-    const currentPolicy = foldCompactionPolicy(agent.session.events)
-    const policyChanged = JSON.stringify(currentPolicy) !== JSON.stringify(request.compactionPolicy)
-    if (changes.length === 0 && !policyChanged) return { ok: true, value: foldSessionMemory(agent.session.events) }
+    if (changes.length === 0) return { ok: true, value: foldSessionMemory(agent.session.events) }
     if (changes.length > 0) {
       agent.session.append('session-memory/change', { version: 2, operation: 'replace', document: resolved, changes }, { ignorable: true })
-    }
-    if (policyChanged) {
-      agent.session.append('mindspace-compaction/policy' as never, {
-        version: 1,
-        ...request.compactionPolicy,
-        updatedAt: Date.now(),
-      } as never, { ignorable: true })
     }
     await this.ctx.sessions.flush(agent.session)
     return { ok: true, value: foldSessionMemory(agent.session.events) }
@@ -522,7 +539,6 @@ export class SessionMemoryService extends TypertRemoteService {
           assistantInstructions: [...current.assistantInstructions],
           relationship: current.relationship,
           roleplayPreset: current.roleplayPreset,
-          compactionPolicy: foldCompactionPolicy(exec.agent.session.events),
         }
         if (args.action === 'set_user_profile') {
           Object.assign(request, {

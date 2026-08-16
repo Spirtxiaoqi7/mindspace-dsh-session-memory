@@ -78,13 +78,6 @@ const _deepseek_ai_dsh_session_memory_governance_sessionMemory_replace_parameter
   'enabled': z.boolean().readonly(),
   'text': z.string().readonly(),
 })]).readonly(),
-  'compactionPolicy': z.object({
-  'enabled': z.boolean().readonly(),
-  'thresholdRatio': z.number().readonly(),
-  'retainTokens': z.number().readonly(),
-  'maxTokens': z.number().readonly(),
-  'updatedAt': z.number().readonly(),
-}).readonly(),
 })
 const _deepseek_ai_dsh_session_memory_governance_sessionMemory_replace_result$schema = z.union([z.object({
   'ok': z.literal(true).readonly(),
@@ -140,6 +133,14 @@ const _deepseek_ai_dsh_session_memory_governance_sessionMemory_replace_result$sc
   'message': z.string().readonly(),
 }).readonly(),
 })])
+
+const _mindspace_dsh_session_memory_sessionMemory_compactionPolicy$schema = z.object({
+  'enabled': z.boolean().readonly(),
+  'thresholdRatio': z.number().readonly(),
+  'retainTokens': z.number().readonly(),
+  'maxTokens': z.number().readonly(),
+  'updatedAt': z.number().readonly(),
+}).readonly()
 
 export const TYPERT = {
   package: 'mindspace-dsh-session-memory',
@@ -216,6 +217,23 @@ export const TYPERT = {
         schema: _deepseek_ai_dsh_session_memory_governance_sessionMemory_replace_result$schema,
       },
       sourceLocation: {"file":"packages/memory/session-memory-governance/src/index.ts","line":378,"column":9},
+    },
+    {
+      id: 'mindspace-dsh-session-memory#sessionMemory/getCompactionPolicy', service: 'sessionMemory', namespace: 'sessionMemory', method: 'getCompactionPolicy', invocation: { kind: 'direct' },
+      scope: { context: 'agent', wire: 'agentId' },
+      parameters: [{ name: 'agent', wire: 'agentId', source: 'lookup', lookup: 'agent', codec: { mode: 'strict', typeSymbol: '@deepseek-ai/dsh-session/types#SessionId', schema: _deepseek_ai_dsh_session_memory_governance_sessionMemory_get_parameter_0$schema } }],
+      result: { mode: 'strict', typeSymbol: 'mindspace-dsh-session-memory/client#ContextCompactionPolicy', schema: _mindspace_dsh_session_memory_sessionMemory_compactionPolicy$schema },
+      sourceLocation: {"file":"src/memory/index.ts","line":396,"column":3},
+    },
+    {
+      id: 'mindspace-dsh-session-memory#sessionMemory/setCompactionPolicy', service: 'sessionMemory', namespace: 'sessionMemory', method: 'setCompactionPolicy', invocation: { kind: 'direct' },
+      scope: { context: 'agent', wire: 'agentId' },
+      parameters: [
+        { name: 'agent', wire: 'agentId', source: 'lookup', lookup: 'agent', codec: { mode: 'strict', typeSymbol: '@deepseek-ai/dsh-session/types#SessionId', schema: _deepseek_ai_dsh_session_memory_governance_sessionMemory_get_parameter_0$schema } },
+        { name: 'policy', wire: 'policy', source: 'json', codec: { mode: 'strict', typeSymbol: 'mindspace-dsh-session-memory/client#ContextCompactionPolicy', schema: _mindspace_dsh_session_memory_sessionMemory_compactionPolicy$schema } },
+      ],
+      result: { mode: 'strict', typeSymbol: 'mindspace-dsh-session-memory/client#ContextCompactionPolicy', schema: _mindspace_dsh_session_memory_sessionMemory_compactionPolicy$schema },
+      sourceLocation: {"file":"src/memory/index.ts","line":403,"column":9},
     },
   ],
   model: {

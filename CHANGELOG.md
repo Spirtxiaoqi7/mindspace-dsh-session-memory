@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.2.10 - 2026-08-16
+
+- Fixed the Memory Center save failure caused by putting context-compaction
+  fields inside the versioned `sessionMemory/replace` wire request.
+- Moved context-compaction reads and writes to dedicated Remote methods, so
+  policy changes persist and take effect for the current session without
+  rewriting personalization memory.
+
 ## 0.2.9 - 2026-08-16
 
 - Added a per-session context-compaction policy: enable state, trigger ratio,

@@ -83,7 +83,6 @@ export interface ReplaceSessionMemoryRequest {
   readonly assistantInstructions: readonly SessionMemoryItem[]
   readonly relationship: SessionRelationship | null
   readonly roleplayPreset: SessionRoleplayPreset | null
-  readonly compactionPolicy: ContextCompactionPolicy
 }
 
 /** Stable failure returned across the Remote boundary. */
