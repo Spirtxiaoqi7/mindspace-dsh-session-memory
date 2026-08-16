@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.2.7
+
+- Make clean DSH Web profile installation self-contained by disabling the
+  conflicting in-tree experimental session-memory service and its UI row
+  before mounting DSH-memory's own Remote and settings surface.
+
 ## 0.2.6
 
 - Show the exact session-identity fragment that is injected ahead of the

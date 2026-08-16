@@ -1,7 +1,14 @@
 # Session-isolated personalization memory for a DeepSeek Harness Web profile.
 # This out-of-tree bundle owns its service, Remote contract, and settings entry.
-# It does not target or disable entries from another checkout, so the patch is
-# portable across clean official profiles.
+# Current DSH base/web bundles also ship an experimental in-tree memory service
+# under the same Remote namespace. Disable those rows here so a clean profile
+# never mounts two `sessionMemory` providers.
+- id: session-memory-governance
+  disabled: true
+
+- id: ui-session-memory
+  disabled: true
+
 - insert:
     - id: mindspace-session-memory
       name: mindspace-dsh-session-memory
