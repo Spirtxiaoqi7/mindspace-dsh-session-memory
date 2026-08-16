@@ -6,6 +6,7 @@ import {
   normalizeSessionMemoryDocument,
 } from '../src/memory/fold.ts'
 import { mergeAssistantIdentity, mergeExtraction, parseExtraction } from '../src/memory/extraction.ts'
+import { renderSessionMemory, renderSessionMissionIdentity } from '../src/memory/render.ts'
 import type { LegacySessionMemoryDocumentV1 } from '../src/memory/domain.ts'
 import type { ExtractionProposal } from '../src/memory/extraction.ts'
 import type { SessionMemoryDocument } from '../src/memory/types.ts'
@@ -33,6 +34,18 @@ function currentWithPreference(text: string): SessionMemoryDocument {
 }
 
 describe('V2 complete-state extraction', () => {
+  it('promotes an explicit window mission into the identity slot, not a late relationship hint', () => {
+    const document: SessionMemoryDocument = {
+      ...emptySessionMemory(),
+      relationship: { role: 'private companion', mission: 'help plan this trip', guidance: 'be direct' },
+    }
+    const view = { document, memoryActivity: [] }
+    expect(renderSessionMissionIdentity(view)).toContain('You are private companion in this conversation.')
+    expect(renderSessionMissionIdentity(view)).toContain('Your primary mission is: help plan this trip.')
+    expect(renderSessionMemory(view)).not.toContain('Current relationship and purpose')
+    expect(renderSessionMissionIdentity({ document: emptySessionMemory(), memoryActivity: [] })).toBeUndefined()
+  })
+
   it('adds an assistant nickname without silently enabling a disabled preset', () => {
     const preset = mergeAssistantIdentity(
       { enabled: false, text: '你是萧镜鸢。' },

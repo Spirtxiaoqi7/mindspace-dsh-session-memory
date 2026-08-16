@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.2.6
+
+- Show the exact session-identity fragment that is injected ahead of the
+  default Harness identity after a relationship mission is saved.
+- Clarify in the editor that the roleplay preset is a separate enabled-only
+  style layer and cannot override the session mission.
+
+## 0.2.5
+
+- Promote an explicit per-session relationship mission into the first identity
+  prompt slot, replacing the generic Harness opener without dropping Web or
+  tool instructions.
+- Keep the roleplay preset as a separate, enabled-only style layer instead of
+  conflating it with the session identity.
+
 ## 0.2.4
 
 - Fix the Personalization settings panel on current DSH runtimes by resolving
