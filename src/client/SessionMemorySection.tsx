@@ -49,6 +49,28 @@ interface EditableDocument {
   compactionPolicy: ContextCompactionPolicy
 }
 
+function sameMemoryValue(left: unknown, right: unknown): boolean {
+  return JSON.stringify(left) === JSON.stringify(right)
+}
+
+/** Apply only sections changed in this editor over the newest persisted document. */
+function mergeDraftOverLatest(
+  draft: EditableDocument,
+  baseline: SessionMemoryView['document'],
+  latest: SessionMemoryView['document'],
+): ReplaceSessionMemoryRequest {
+  return {
+    expectedRevision: latest.revision,
+    userProfile: sameMemoryValue(draft.userProfile, baseline.userProfile) ? latest.userProfile : draft.userProfile,
+    preferences: sameMemoryValue(draft.preferences, baseline.preferences) ? latest.preferences : draft.preferences,
+    assistantInstructions: sameMemoryValue(draft.assistantInstructions, baseline.assistantInstructions)
+      ? latest.assistantInstructions
+      : draft.assistantInstructions,
+    relationship: sameMemoryValue(draft.relationship, baseline.relationship) ? latest.relationship : draft.relationship,
+    roleplayPreset: sameMemoryValue(draft.roleplayPreset, baseline.roleplayPreset) ? latest.roleplayPreset : draft.roleplayPreset,
+  }
+}
+
 function item(text = ''): SessionMemoryItem {
   return { id: `draft-${crypto.randomUUID()}`, category: '', text, source: 'user', evidenceSeqs: [] }
 }
@@ -200,11 +222,26 @@ export function SessionMemorySection({ useSessions, remote, commands, t }: Sessi
       const result = response.value
       if (!result.ok) {
         if (result.error.code === 'stale-revision') {
-          // Do not retry a whole-document replace against a moving extractor.
-          // Reload is deliberately lossless for persisted memory: the user sees
-          // the current document instead of overwriting it with an old draft.
-          await load()
-          setStatus('记忆已在其他位置变化，已重新载入最新版本；未覆盖现有记忆。')
+          // The extractor may have changed another section while the user was
+          // editing. Rebase just the user's changed sections once, preserving
+          // every untouched newest section. A second conflict keeps the draft.
+          const latestResponse = await remote.get(selected as never)
+          if (!latestResponse.ok) { setStatus(latestResponse.error.message); return }
+          const rebased = mergeDraftOverLatest(draft, view.document, latestResponse.value.document)
+          const retryResponse = await remote.replace(selected as never, rebased)
+          if (!retryResponse.ok) { setStatus(retryResponse.error.message); return }
+          const retry = retryResponse.value
+          if (!retry.ok) {
+            setStatus(retry.error.code === 'stale-revision'
+              ? '记忆仍在持续变化，已保留你的未保存草稿；请稍后保存或重新载入。'
+              : retry.error.message)
+            return
+          }
+          setView(retry.value)
+          setDraft({ ...draft, expectedRevision: retry.value.document.revision, userProfile: retry.value.document.userProfile,
+            preferences: [...retry.value.document.preferences], assistantInstructions: [...retry.value.document.assistantInstructions],
+            relationship: retry.value.document.relationship, roleplayPreset: retry.value.document.roleplayPreset })
+          setStatus('已将你的修改合并到最新记忆；未改动的内容已保留。')
         } else setStatus(result.error.message)
         return
       }

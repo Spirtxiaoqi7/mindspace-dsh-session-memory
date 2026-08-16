@@ -1,13 +1,19 @@
 # Changelog
 
+## 0.2.21 - 2026-08-16
+
+- Rebased a stale editor save once onto the latest session document. Only the
+  sections the user changed are applied; untouched sections retain concurrent
+  extractor changes. A repeated conflict preserves the local draft.
+
 ## 0.2.20 - 2026-08-16
 
 - Fixed legacy context-compaction policy replay so incomplete historical policy
   events are normalized before crossing the strict Typert result boundary.
 - Memory Center now renders editable personalization data even if its separate
   compression-policy endpoint is temporarily unavailable.
-- A stale whole-document save now reloads the latest persisted version instead
-  of retrying an old draft over newer memory.
+- A stale whole-document save no longer retries an old complete document over
+  newer memory.
 
 ## 0.2.12 - 2026-08-16
 
