@@ -115,7 +115,7 @@ It does not patch DSH source, `api-remotes`, the built-in bundles, or root TypeS
 projects. Removal is therefore one command:
 
 ```sh
-dsh plugin --profile web remove mindspace-dsh-session-memory
+corepack pnpm dsh plugin --profile web remove mindspace-dsh-session-memory
 ```
 
 ## Data and model calls

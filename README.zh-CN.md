@@ -99,7 +99,7 @@ GitHub Release 仅对应其 tag，不等同于本 README 描述的 `main` 功能
 它不修改 DSH 源码、`api-remotes`、官方 bundle 或根 tsconfig。卸载只需：
 
 ```sh
-dsh plugin --profile web remove mindspace-dsh-session-memory
+corepack pnpm dsh plugin --profile web remove mindspace-dsh-session-memory
 ```
 
 ## 数据与模型调用
@@ -109,7 +109,19 @@ dsh plugin --profile web remove mindspace-dsh-session-memory
 包含完整状态和逐信息处理清单，否则整批拒绝，不会留下半份记忆。明确事实与谨慎
 观察分开保存，敏感事实不得靠推测写入。
 
-如只允许工具/人工写入，可在更后的 profile patch 中把 `autoExtract` 设为 `false`。
+如只允许工具/人工写入，可在更后的 profile patch 中把 `autoExtract` 设为 `false`。默认
+profile 也明确固定为：每个偏好/对 AI 要求分区最多 3 张卡，用户画像最多 300 字。
+
+```yaml
+- id: mindspace-session-memory
+  name: mindspace-dsh-session-memory
+  config:
+    maxTextBytes: 4096
+    maxItemsPerSection: 3
+    maxProfileCharacters: 300
+    autoExtract: false
+    extractionMaxTokens: 1024
+```
 
 ## 兼容性
 

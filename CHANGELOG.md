@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.2.22 - 2026-08-17
+
+- Aligned the checked-in profile defaults with the runtime limits: three cards
+  per editable card section and a 300-character user profile.
+- Corrected the documented removal command to run through the official Harness
+  checkout, matching installation and startup.
+
 ## 0.2.21 - 2026-08-16
 
 - Rebased a stale editor save once onto the latest session document. Only the
