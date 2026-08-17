@@ -80,21 +80,29 @@ the default Web profile.
 
 ## Install
 
-Prebuilt tarball or npm package (no install-time build permission):
+This README describes current `main`. It does not point at a nonexistent Release
+tarball: build the prebuilt package from a pulled checkout, then install it from
+the **official Harness checkout root**.
 
-```sh
-dsh plugin --profile web add ./mindspace-dsh-session-memory-0.2.1.tgz
-dsh --profile web --dump-config
-dsh web
+```powershell
+git clone https://github.com/Spirtxiaoqi7/mindspace-dsh-session-memory.git
+Set-Location .\mindspace-dsh-session-memory
+corepack pnpm install
+corepack pnpm run build
+corepack pnpm pack --pack-destination dist
+$memoryTgz = (Get-ChildItem .\dist\mindspace-dsh-session-memory-*.tgz | Sort-Object LastWriteTime -Descending | Select-Object -First 1).FullName
+
+Set-Location C:\path\to\deepseek-harness
+corepack pnpm dsh plugin --profile web add $memoryTgz
+corepack pnpm dsh --profile web --dump-config
+corepack pnpm dsh web
 ```
 
-The repository deliberately does not expose an install-time build script. Install a
-release tarball or npm artifact; a raw GitHub checkout is source for review and
-development, not an installable prebuilt artifact.
-
-Version `0.2.1` removes entry overrides that only applied to an early experimental
-checkout, so it composes cleanly in an unmodified official Web profile without
-`entry not found` diagnostics.
+Do not run `pnpm dsh` in the plugin directory or require a global `dsh`: that
+command belongs to the official Harness checkout. The repository has no
+install-time build script; the commands above explicitly create and install the
+tarball. Historic GitHub Releases map only to their respective tags and do not
+represent the current `main` feature set.
 
 ## How it composes
 

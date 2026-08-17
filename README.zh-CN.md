@@ -69,19 +69,26 @@ V2 验收已通过 10 项自动化测试、构建与打包、真实模型写入/
 
 ## 安装
 
-安装预构建 tarball（无需授权安装脚本）：
+本 README 描述 `main` 的当前代码。它不将未发布的版本号写成不存在的 Release
+tarball：先拉取源码并手动生成预构建包，再在 **官方 Harness checkout 根目录** 安装。
 
-```sh
-dsh plugin --profile web add ./mindspace-dsh-session-memory-0.2.1.tgz
-dsh --profile web --dump-config
-dsh web
+```powershell
+git clone https://github.com/Spirtxiaoqi7/mindspace-dsh-session-memory.git
+Set-Location .\mindspace-dsh-session-memory
+corepack pnpm install
+corepack pnpm run build
+corepack pnpm pack --pack-destination dist
+$memoryTgz = (Get-ChildItem .\dist\mindspace-dsh-session-memory-*.tgz | Sort-Object LastWriteTime -Descending | Select-Object -First 1).FullName
+
+Set-Location C:\path\to\deepseek-harness
+corepack pnpm dsh plugin --profile web add $memoryTgz
+corepack pnpm dsh --profile web --dump-config
+corepack pnpm dsh web
 ```
 
-仓库刻意不提供安装时构建脚本。用户应安装 release tarball 或 npm 预构建产物；
-GitHub 源码用于审查和开发，不作为可直接安装的预构建包。
-
-`0.2.1` 已移除只适用于早期实验 checkout 的入口覆盖，可在干净的官方 Web
-profile 中直接组合，不再产生 `entry not found` 诊断。
+不要在插件目录执行 `pnpm dsh`，也不要求全局安装 `dsh`；该命令属于官方 Harness
+checkout。仓库没有安装时构建脚本，以上步骤只会生成并安装明确的 tarball。历史
+GitHub Release 仅对应其 tag，不等同于本 README 描述的 `main` 功能。
 
 ## 组合方式
 
