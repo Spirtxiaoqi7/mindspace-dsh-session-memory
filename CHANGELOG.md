@@ -1,5 +1,26 @@
 # Changelog
 
+## 0.2.25 - 2026-08-20
+
+- Re-enabled DSH's compaction engine and `/compact` command after the Web
+  bundle overlay, so the per-session context-compaction policy is executed
+  rather than merely saved by the Memory Center UI.
+- Restored model autonomy for normal memory writes: the main model now decides
+  whether stable information merits a tool call. The low-utilization automatic
+  extractor skips a turn that already made a successful memory change.
+- Reduced cold-start extraction output pressure: its audit list covers only
+  durable proposed updates and permits an empty list for ordinary conversation.
+
+## 0.2.24 - 2026-08-20
+
+- Reframed automatic extraction as a cold-start fallback: it now runs only
+  while the editable, persisted session-memory document is below 20% of its
+  configured capacity. System prompts, RAG, compaction summaries, evidence,
+  and event history are not counted.
+- Raised the fallback extraction budget to 6000 tokens. Once the cold-start
+  threshold is reached, only the primary model's explicit memory-tool decision
+  can write memory.
+
 ## 0.2.22 - 2026-08-17
 
 - Aligned the checked-in profile defaults with the runtime limits: three cards

@@ -105,9 +105,12 @@ corepack pnpm dsh plugin --profile web remove mindspace-dsh-session-memory
 ## 数据与模型调用
 
 修改会追加到所选 DSH 会话的事件日志。界面用版本号进行乐观并发控制，避免静默
-覆盖。自动抽取默认开启，根 Agent 一轮完成后可能额外发起一次模型请求；结果必须
-包含完整状态和逐信息处理清单，否则整批拒绝，不会留下半份记忆。明确事实与谨慎
-观察分开保存，敏感事实不得靠推测写入。
+覆盖。自动抽取只是冷启动兜底：仅当可编辑记忆实际占用低于 20% 时，根 Agent 一轮
+完成后才可能额外发起一次模型请求；若该回合主模型已通过工具写入，则兜底不会重复
+运行；达到该比例后完全交回主模型按工具提示自行判断是否写入。它不读取或计入系统
+提示、RAG、上下文压缩、事件日志。辅助调用预算默认 6000 tokens；结果必须包含完整
+状态和仅针对耐久更新的审计清单，否则整批拒绝，不会留下半份
+记忆。明确事实与谨慎观察分开保存，敏感事实不得靠推测写入。
 
 如只允许工具/人工写入，可在更后的 profile patch 中把 `autoExtract` 设为 `false`。默认
 profile 也明确固定为：每个偏好/对 AI 要求分区最多 3 张卡，用户画像最多 300 字。
@@ -120,7 +123,8 @@ profile 也明确固定为：每个偏好/对 AI 要求分区最多 3 张卡，�
     maxItemsPerSection: 3
     maxProfileCharacters: 300
     autoExtract: false
-    extractionMaxTokens: 1024
+    autoExtractBelowUtilization: 0.2
+    extractionMaxTokens: 6000
 ```
 
 ## 兼容性

@@ -122,11 +122,15 @@ corepack pnpm dsh plugin --profile web remove mindspace-dsh-session-memory
 
 Memory changes are appended to the selected DSH session event log. The UI reads and
 replaces a whole versioned document with optimistic revision checks. Automatic
-extraction is enabled by default and may make one auxiliary model request after a
-completed root-agent turn. A proposal must contain the complete next state plus a
-handled/skipped ledger for every extracted atom; invalid or partial output is rejected
-atomically. Confirmed facts and cautious observations remain separate, and inferred
-sensitive facts are rejected by policy.
+extraction is a cold-start fallback: it may make one auxiliary model request after a
+completed root-agent turn only while editable memory utilization is below 20%, and
+skips a turn that already made a model-owned memory-tool write. Above that threshold,
+the primary model alone decides whether to use the memory tools.
+System prompts, RAG, compaction summaries, and event history are not counted. The
+auxiliary budget defaults to 6000 tokens. A proposal must contain the complete next
+state plus a handled/skipped ledger for every extracted atom; invalid or partial output
+is rejected atomically. Confirmed facts and cautious observations remain separate, and
+inferred sensitive facts are rejected by policy.
 
 Disable automatic extraction in a later profile patch if you want tool/manual writes
 only:
@@ -139,7 +143,8 @@ only:
     maxItemsPerSection: 3
     maxProfileCharacters: 300
     autoExtract: false
-    extractionMaxTokens: 1024
+    autoExtractBelowUtilization: 0.2
+    extractionMaxTokens: 6000
 ```
 
 ## Compatibility

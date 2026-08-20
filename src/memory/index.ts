@@ -23,8 +23,11 @@ import {
   MAX_MEMORY_CARDS,
   mergeAssistantIdentity,
   mergeExtraction,
+  reviewOverwrites,
+  turnExtractionInput,
 } from './extraction.ts'
 import { renderSessionMemory, renderSessionMissionIdentity } from './render.ts'
+import { DEFAULT_AUTO_EXTRACT_BELOW_UTILIZATION, sessionMemoryUtilization } from './usage.ts'
 import type {
   ContextCompactionPolicy,
   ReplaceSessionMemoryRequest,
@@ -54,9 +57,13 @@ export {
   MAX_MEMORY_CARDS,
   mergeExtraction,
   parseExtraction,
+  parseOverwriteReview,
+  reviewOverwrites,
   turnExtractionInput,
 } from './extraction.ts'
 export { renderSessionMemory, renderSessionMissionIdentity } from './render.ts'
+export { DEFAULT_AUTO_EXTRACT_BELOW_UTILIZATION, sessionMemoryUtilization } from './usage.ts'
+export type { SessionMemoryUsageLimits } from './usage.ts'
 
 export interface Config {
   readonly maxTextBytes?: number
@@ -65,6 +72,11 @@ export interface Config {
   /** Unicode code-point budget shared by confirmed and inferred profile text. */
   readonly maxProfileCharacters?: number
   readonly autoExtract?: boolean
+  /**
+   * Background extraction is a cold-start fallback, not a second memory owner.
+   * It runs only while the editable document is below this utilization ratio.
+   */
+  readonly autoExtractBelowUtilization?: number
   readonly extractionMaxTokens?: number
 }
 
@@ -73,6 +85,7 @@ interface ResolvedConfig {
   readonly maxItemsPerSection: number
   readonly maxProfileCharacters: number
   readonly autoExtract: boolean
+  readonly autoExtractBelowUtilization: number
   readonly extractionMaxTokens: number
 }
 
@@ -112,9 +125,10 @@ const documentSchema = zod.object({
 const viewSchema = zod.object({ document: documentSchema, memoryActivity: zod.array(activitySchema) })
 
 const MEMORY_TOOL_GUIDANCE = [
-  'Session memory is important durable user state. Call update_session_memory before replying whenever the user',
+  'Session memory is important durable user state. Decide whether to call update_session_memory when the user',
   'explicitly states or changes stable personal information, a preference, an assistant rule, relationship, identity,',
-  'conversation purpose, or roleplay preset. The user does not need to say remember. Merge related preferences and',
+  'conversation purpose, or roleplay preset. The user does not need to say remember, but do not write transient',
+  'small talk, one-off tasks, or guesses. Merge related preferences and',
   'assistant instructions into categorized cards; each section can contain at most three cards. New explicit facts',
   'replace conflicts. The personal profile separates confirmed user facts from cautious inferred observations.',
   'Taxonomy is strict: userProfile is only identity, demographics, location, work, skills, life state, and durable',
@@ -140,6 +154,16 @@ function isEmptyDocument(document: SessionMemoryDocument): boolean {
     && document.assistantInstructions.length === 0
     && document.relationship === null
     && document.roleplayPreset === null
+}
+
+/** A model-owned memory write during this turn makes the cold-start fallback redundant. */
+function turnAlreadyWroteSessionMemory(events: readonly SessionEvent[], turn: number): boolean {
+  let start = -1
+  for (let index = events.length - 1; index >= 0; index -= 1) {
+    const event = events[index]!
+    if (event.type === 'turn/start' && event.data.turn === turn) { start = index; break }
+  }
+  return start >= 0 && events.slice(start + 1).some(event => event.type === 'session-memory/change')
 }
 
 function failure(code: SessionMemoryFailure['code'], message: string): SessionMemoryMutationResult {
@@ -315,7 +339,8 @@ export class SessionMemoryService extends TypertRemoteService {
     maxItemsPerSection: z.number().step(1).min(1).max(MAX_MEMORY_CARDS).default(MAX_MEMORY_CARDS),
     maxProfileCharacters: z.number().step(1).min(1).default(DEFAULT_PROFILE_CHARACTERS),
     autoExtract: z.boolean().default(true),
-    extractionMaxTokens: z.number().step(1).min(1).default(1536),
+    autoExtractBelowUtilization: z.number().min(0).max(1).default(DEFAULT_AUTO_EXTRACT_BELOW_UTILIZATION),
+    extractionMaxTokens: z.number().step(1).min(1).default(6000),
   })
 
   private readonly resolved: ResolvedConfig
@@ -331,7 +356,8 @@ export class SessionMemoryService extends TypertRemoteService {
       maxItemsPerSection: Math.min(config.maxItemsPerSection ?? MAX_MEMORY_CARDS, MAX_MEMORY_CARDS),
       maxProfileCharacters: config.maxProfileCharacters ?? DEFAULT_PROFILE_CHARACTERS,
       autoExtract: config.autoExtract ?? true,
-      extractionMaxTokens: config.extractionMaxTokens ?? 1536,
+      autoExtractBelowUtilization: config.autoExtractBelowUtilization ?? DEFAULT_AUTO_EXTRACT_BELOW_UTILIZATION,
+      extractionMaxTokens: config.extractionMaxTokens ?? 6000,
     }
     ctx.systemPrompt.section({ name: 'tool:session-memory', order: 113, text: MEMORY_TOOL_GUIDANCE })
     this.registerTools()
@@ -354,13 +380,39 @@ export class SessionMemoryService extends TypertRemoteService {
           )) return
           try {
             const current = foldSessionMemory(agent.session.events).document
+            if (sessionMemoryUtilization(current, this.resolved) >= this.resolved.autoExtractBelowUtilization) return
+            if (turnAlreadyWroteSessionMemory(agent.session.events, turn)) return
             const proposal = await extractTurn(llmCtx, agent, turn, current, this.resolved.extractionMaxTokens, signal)
             if (proposal === undefined) return
             const result = agent.session.events.findLast(
               (event): event is SessionEvent<'session-memory/extraction-result'> =>
                 event.type === 'session-memory/extraction-result' && event.data.turn === turn,
             )
-            const merged = mergeExtraction(current, proposal, result?.data.sourceSeqs ?? [], Date.now())
+            const sourceSeqs = result?.data.sourceSeqs ?? []
+            const provisional = mergeExtraction(current, proposal, sourceSeqs, Date.now())
+            const overwriteCandidates = provisional.changes
+              .filter(change => change.operation === 'replace' && change.before !== null)
+              .map(change => ({ section: change.section, before: change.before as string, after: change.after }))
+            const userEvidence = turnExtractionInput(agent.session.events, turn)?.input
+            // A full-state proposal may legitimately replace a durable fact, but
+            // it must first pass a second, evidence-bound review. If the model
+            // cannot produce that review we keep the old value and retain the
+            // non-destructive append/merge work from the first proposal.
+            const approvals = overwriteCandidates.length === 0
+              ? undefined
+              : await reviewOverwrites(
+                llmCtx,
+                agent,
+                turn,
+                current,
+                userEvidence ?? '',
+                overwriteCandidates,
+                this.resolved.extractionMaxTokens,
+                signal,
+              )
+            const merged = overwriteCandidates.length === 0
+              ? provisional
+              : mergeExtraction(current, proposal, sourceSeqs, Date.now(), { overwriteApprovals: approvals ?? [] })
             if (merged.changes.length === 0) return
             const validated = resolveDocument({
               expectedRevision: current.revision,

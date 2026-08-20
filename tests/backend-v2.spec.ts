@@ -5,7 +5,8 @@ import {
   migrateLegacyDocument,
   normalizeSessionMemoryDocument,
 } from '../src/memory/fold.ts'
-import { mergeAssistantIdentity, mergeExtraction, parseExtraction } from '../src/memory/extraction.ts'
+import { mergeAssistantIdentity, mergeExtraction, parseExtraction, parseOverwriteReview } from '../src/memory/extraction.ts'
+import { sessionMemoryUtilization } from '../src/memory/usage.ts'
 import { renderSessionMemory, renderSessionMissionIdentity } from '../src/memory/render.ts'
 import type { LegacySessionMemoryDocumentV1 } from '../src/memory/domain.ts'
 import type { ExtractionProposal } from '../src/memory/extraction.ts'
@@ -34,6 +35,17 @@ function currentWithPreference(text: string): SessionMemoryDocument {
 }
 
 describe('V2 complete-state extraction', () => {
+  it('uses automatic extraction only during the first 20% of editable memory capacity', () => {
+    const limits = { maxTextBytes: 4096, maxItemsPerSection: 3, maxProfileCharacters: 300 }
+    expect(sessionMemoryUtilization(emptySessionMemory(), limits)).toBe(0)
+    const nearFull = {
+      ...emptySessionMemory(),
+      preferences: [{ id: 'p', category: '偏好', text: '甲'.repeat(4096), source: 'extracted' as const, evidenceSeqs: [] }],
+      assistantInstructions: [{ id: 'a', category: '要求', text: '乙'.repeat(4096), source: 'extracted' as const, evidenceSeqs: [] }],
+    }
+    expect(sessionMemoryUtilization(nearFull, limits)).toBeGreaterThanOrEqual(0.2)
+  })
+
   it('promotes an explicit window mission into the identity slot, not a late relationship hint', () => {
     const document: SessionMemoryDocument = {
       ...emptySessionMemory(),
@@ -55,7 +67,7 @@ describe('V2 complete-state extraction', () => {
     expect(mergeAssistantIdentity(preset, '官方外号是粉色小鲸鱼。')).toEqual(preset)
   })
 
-  it('rejects a partial result without a complete atom coverage ledger', () => {
+  it('rejects a partial result but permits an empty durable-update audit list', () => {
     expect(parseExtraction(JSON.stringify({
       userProfile: { confirmed: '', inferred: '' },
       preferences: [],
@@ -63,6 +75,14 @@ describe('V2 complete-state extraction', () => {
       relationship: null,
       roleplayPreset: null,
     }))).toBeUndefined()
+    expect(parseExtraction(JSON.stringify({
+      userProfile: { confirmed: '', inferred: '' },
+      preferences: [],
+      assistantInstructions: [],
+      relationship: null,
+      roleplayPreset: null,
+      atoms: [],
+    }))).toMatchObject({ atoms: [] })
     expect(parseExtraction(JSON.stringify({
       userProfile: { confirmed: '', inferred: '' },
       preferences: [],
@@ -96,6 +116,38 @@ describe('V2 complete-state extraction', () => {
     expect(result.changes).toEqual(expect.arrayContaining([
       expect.objectContaining({ operation: 'replace', section: 'preferences', sourceSeqs: [22] }),
     ]))
+  })
+
+  it('keeps a prior card when the overwrite review lacks explicit correction evidence', () => {
+    const before = currentWithPreference('喜欢苹果')
+    const result = mergeExtraction(before, proposal({
+      preferences: [{ category: '饮食偏好', text: '喜欢香蕉' }],
+      atoms: [{ text: '顺便买了香蕉', disposition: 'handled', section: 'preferences', reason: 'new detail only' }],
+    }), [23], 1_001, {
+      overwriteApprovals: [{
+        section: 'preferences',
+        before: '饮食偏好：喜欢苹果',
+        after: '饮食偏好：喜欢香蕉',
+        approved: false,
+        reason: 'The newest user message did not explicitly correct the prior preference.',
+      }],
+    })
+    expect(result.document.preferences[0]).toMatchObject({ id: 'stable-id', text: '喜欢苹果' })
+    expect(result.document.revision).toBe(4)
+    expect(result.changes).toEqual(expect.arrayContaining([
+      expect.objectContaining({ operation: 'skip', section: 'preferences' }),
+    ]))
+  })
+
+  it('requires an exact, complete overwrite review before authorizing destructive automatic changes', () => {
+    const candidates = [{ section: 'preferences' as const, before: '饮食偏好：喜欢苹果', after: '饮食偏好：喜欢香蕉' }]
+    expect(parseOverwriteReview(JSON.stringify({ decisions: [{
+      ...candidates[0], approved: true, reason: '用户明确说不喜欢苹果，改为香蕉。',
+    }] }), candidates)).toMatchObject([{ approved: true }])
+    expect(parseOverwriteReview(JSON.stringify({ decisions: [] }), candidates)).toBeUndefined()
+    expect(parseOverwriteReview(JSON.stringify({ decisions: [{
+      section: 'preferences', before: '饮食偏好：喜欢梨', after: '饮食偏好：喜欢香蕉', approved: true, reason: 'wrong prior value',
+    }] }), candidates)).toBeUndefined()
   })
 
   it('folds a fourth proposed category into three cards without losing its text', () => {

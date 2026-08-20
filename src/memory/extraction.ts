@@ -26,6 +26,8 @@ export const EXTRACTION_SYSTEM = [
   'preferences and assistantInstructions are complete arrays of at most 3 {category,text} cards. A card is a compact',
   'structured category containing all related details. Merge new details into the best existing card; do not append a',
   'sentence-shaped card when a category can absorb it. A newer explicit correction replaces conflicting old content.',
+  'A proposed destructive overwrite receives a second evidence review, so preserve an old card whenever the newest',
+  'user message merely adds detail instead of explicitly correcting or withdrawing it.',
   'For “not X but Y” corrections, remove X instead of preserving “does not use X” unless the user separately states',
   'that avoiding X is itself a durable preference.',
   'Preserve every unaffected current fact and card. relationship and roleplayPreset are the complete resulting object',
@@ -33,9 +35,9 @@ export const EXTRACTION_SYSTEM = [
   'assistant belongs in relationship or roleplayPreset, never userProfile or preferences. Preserve existing preset',
   'content when adding an alias. Judge only user text: assistant refusal does not cancel user input. Never invent',
   'sensitive facts. The',
-  'response is rejected atomically if incomplete or invalid. Also return atoms, one row for EVERY distinct claim in',
-  'the newest user message: {text,disposition:"handled"|"skipped",section,reason}; handled requires a target section',
-  'and skipped requires a concrete reason. This coverage ledger prevents partial writes.',
+  'response is rejected atomically if incomplete or invalid. Return atoms as a compact audit list only for durable',
+  'updates you actually propose: {text,disposition:"handled"|"skipped",section,reason}. Use [] when this turn has',
+  'no durable memory update. Do not enumerate ordinary conversation claims, do not think aloud, and emit JSON only.',
 ].join(' ')
 
 export const DEFAULT_RELATIONSHIP_MISSION
@@ -61,6 +63,30 @@ export interface ExtractionProposal {
   roleplayPreset: SessionRoleplayPreset | null
   atoms: ExtractionAtom[]
 }
+
+/**
+ * A second-pass decision for a destructive automatic mutation. The primary
+ * extractor is still free to propose a replacement; this guard only decides
+ * whether that exact replacement is justified by the newest user evidence.
+ */
+export interface OverwriteApproval {
+  readonly section: SessionMemorySection
+  readonly before: string
+  readonly after: string | null
+  readonly approved: boolean
+  readonly reason: string
+}
+
+/** A compact, evidence-bound prompt used only after an automatic overwrite is proposed. */
+export const OVERWRITE_REVIEW_SYSTEM = [
+  'You are reviewing a proposed automatic update to session-local memory. Return JSON only as',
+  '{"decisions":[{"section":"...","before":"...","after":"..."|null,"approved":true|false,"reason":"..."}]}.',
+  'Review only the supplied candidates. Approve a replacement or removal only when the newest USER evidence',
+  'explicitly corrects, supersedes, or withdraws the exact prior fact/rule. New detail that does not directly',
+  'contradict the old value must be rejected here so the normal merge path preserves both facts. Never approve',
+  'a deletion merely because a complete-state proposal omitted a card. Every candidate needs one concise decision',
+  'and a reason that cites the supplied user evidence; do not infer intent from assistant text.',
+].join(' ')
 
 /** Add an assistant identity note without silently changing the user's preset switch. */
 export function mergeAssistantIdentity(
@@ -101,7 +127,7 @@ const SECTIONS = new Set<SessionMemorySection>([
 ])
 
 function parseAtoms(value: unknown): ExtractionAtom[] | undefined {
-  if (!Array.isArray(value) || value.length === 0 || value.length > 64) return undefined
+  if (!Array.isArray(value) || value.length > 64) return undefined
   const atoms: ExtractionAtom[] = []
   for (const valueItem of value) {
     if (typeof valueItem !== 'object' || valueItem === null || Array.isArray(valueItem)) return undefined
@@ -174,6 +200,99 @@ export function parseExtraction(text: string): ExtractionProposal | undefined {
   }
 }
 
+function overwriteKey(candidate: Pick<OverwriteApproval, 'section' | 'before' | 'after'>): string {
+  return JSON.stringify([candidate.section, candidate.before, candidate.after])
+}
+
+/**
+ * A review is valid only when it accounts for every exact proposed overwrite.
+ * Missing or altered candidates intentionally fail closed so an unrelated model
+ * answer cannot authorize deletion of durable user data.
+ */
+export function parseOverwriteReview(
+  text: string,
+  candidates: readonly Pick<OverwriteApproval, 'section' | 'before' | 'after'>[],
+): OverwriteApproval[] | undefined {
+  try {
+    const value: unknown = JSON.parse(text)
+    if (typeof value !== 'object' || value === null || Array.isArray(value)) return undefined
+    const rows = (value as Record<string, unknown>)['decisions']
+    if (!Array.isArray(rows) || rows.length !== candidates.length) return undefined
+    const expected = new Set(candidates.map(overwriteKey))
+    const decisions: OverwriteApproval[] = []
+    for (const rowValue of rows) {
+      if (typeof rowValue !== 'object' || rowValue === null || Array.isArray(rowValue)) return undefined
+      const row = rowValue as Record<string, unknown>
+      const section = clean(row['section'])
+      const before = clean(row['before'])
+      const after = row['after'] === null ? null : clean(row['after'])
+      const reason = clean(row['reason'])
+      if (section === undefined || !SECTIONS.has(section as SessionMemorySection)
+        || before === undefined || after === undefined || reason === undefined || typeof row['approved'] !== 'boolean') {
+        return undefined
+      }
+      const decision: OverwriteApproval = {
+        section: section as SessionMemorySection,
+        before,
+        after,
+        approved: row['approved'],
+        reason,
+      }
+      const key = overwriteKey(decision)
+      if (!expected.delete(key)) return undefined
+      decisions.push(decision)
+    }
+    return expected.size === 0 ? decisions : undefined
+  } catch (_invalidJson) {
+    return undefined
+  }
+}
+
+/**
+ * Ask the model to justify only destructive automatic mutations. The caller
+ * passes raw user evidence and the exact before/after values, so the reviewer
+ * cannot treat an omitted complete-state card as permission to delete it.
+ */
+export async function reviewOverwrites(
+  ctx: Context,
+  agent: Agent,
+  turn: number,
+  current: SessionMemoryDocument,
+  userEvidence: string,
+  candidates: readonly Pick<OverwriteApproval, 'section' | 'before' | 'after'>[],
+  maxTokens: number,
+  signal: AbortSignal,
+): Promise<OverwriteApproval[] | undefined> {
+  if (candidates.length === 0) return []
+  const route = agent.session.requestHeader()?.config
+  if (route === undefined) return undefined
+  const { BlockAssembler, createUserMessage, deepFreeze } = await import('@deepseek-ai/dsh-llm')
+  const input = JSON.stringify({
+    turn,
+    newestUserEvidence: userEvidence,
+    currentMemory: current,
+    candidateOverwrites: candidates,
+  })
+  const assembler = new BlockAssembler()
+  const request = deepFreeze({
+    provider: route.provider,
+    model: route.model,
+    messages: [createUserMessage({
+      content: [{ type: 'text', text: input }],
+      source: { kind: 'plugin', plugin: 'dsh-session-memory-governance' },
+    })],
+    system: OVERWRITE_REVIEW_SYSTEM,
+    // This payload contains only a small diff. Reserve a bounded answer budget
+    // so reviewing an overwrite never competes with normal response context.
+    maxTokens: Math.min(Math.max(maxTokens, 1024), 1536),
+    sessionId: agent.id,
+    signal,
+  })
+  for await (const chunk of ctx.llm.stream(request)) assembler.push(chunk)
+  const text = assembler.blocks().filter(block => block.type === 'text').map(block => block.text).join('').trim()
+  return parseOverwriteReview(text, candidates)
+}
+
 function normalized(value: string): string {
   return value.trim().toLocaleLowerCase().replaceAll(/\s+/g, ' ')
 }
@@ -229,12 +348,42 @@ function activity(
   }
 }
 
+function skippedOverwrite(
+  section: SessionMemorySection,
+  sourceSeqs: readonly number[],
+  time: number,
+  reason: string,
+): SessionMemoryActivity {
+  return {
+    id: `activity-${randomUUID()}`,
+    sourceSeqs: [...sourceSeqs],
+    operation: 'skip',
+    section,
+    before: null,
+    after: null,
+    reason,
+    at: time,
+  }
+}
+
+function overwriteDecision(
+  approvals: readonly OverwriteApproval[] | undefined,
+  section: SessionMemorySection,
+  before: string,
+  after: string | null,
+): OverwriteApproval | undefined {
+  if (approvals === undefined) return { section, before, after, approved: true, reason: 'No separate overwrite review was required.' }
+  return approvals.find(candidate => candidate.section === section
+    && candidate.before === before && candidate.after === after)
+}
+
 function reconcileCards(
   section: 'preferences' | 'assistantInstructions',
   current: readonly SessionMemoryItem[],
   proposed: readonly ExtractionCard[],
   evidenceSeqs: readonly number[],
   time: number,
+  approvals: readonly OverwriteApproval[] | undefined,
 ): { items: SessionMemoryItem[]; changes: SessionMemoryActivity[] } {
   const available = [...current]
   const items: SessionMemoryItem[] = []
@@ -254,28 +403,58 @@ function reconcileCards(
         source: 'extracted',
         evidenceSeqs: [...new Set([...(previous?.evidenceSeqs ?? []), ...evidenceSeqs])],
       }
+    const before = previous === undefined ? null : cardText(previous)
+    const after = cardText(next)
+    const mutation = before === null ? 'append' : operation(before, after)
+    if (before !== null && mutation === 'replace') {
+      const decision = overwriteDecision(approvals, section, before, after)
+      if (decision?.approved !== true) {
+        items.push(previous)
+        changes.push(skippedOverwrite(
+          section,
+          evidenceSeqs,
+          time,
+          `Preserved the existing card because overwrite review did not approve it: ${decision?.reason ?? 'missing decision.'}`,
+        ))
+        continue
+      }
+    }
     items.push(next)
     if (!unchanged) {
       changes.push(activity(
         section,
-        previous === undefined ? null : cardText(previous),
-        cardText(next),
+        before,
+        after,
         evidenceSeqs,
         time,
         previous === undefined
           ? 'Added a durable category from explicit user evidence.'
-          : 'Consolidated the newest explicit user evidence into its existing category.',
+          : mutation === 'replace'
+            ? `Replaced the category after explicit overwrite review: ${overwriteDecision(approvals, section, before, after)?.reason ?? 'approved.'}`
+            : 'Consolidated the newest explicit user evidence into its existing category.',
       ))
     }
   }
   for (const removed of available) {
+    const before = cardText(removed)
+    const decision = overwriteDecision(approvals, section, before, null)
+    if (decision?.approved !== true) {
+      items.push(removed)
+      changes.push(skippedOverwrite(
+        section,
+        evidenceSeqs,
+        time,
+        `Preserved the omitted card because deletion review did not approve it: ${decision?.reason ?? 'missing decision.'}`,
+      ))
+      continue
+    }
     changes.push(activity(
       section,
-      cardText(removed),
+      before,
       null,
       evidenceSeqs,
       time,
-      'Removed or superseded while reconciling the complete categorized state.',
+      `Removed or superseded after explicit overwrite review: ${decision.reason}`,
     ))
   }
   return { items, changes }
@@ -286,55 +465,96 @@ export interface MergeExtractionResult {
   readonly changes: readonly SessionMemoryActivity[]
 }
 
+export interface MergeExtractionOptions {
+  /** When present, every destructive automatic change must have an approved exact decision. */
+  readonly overwriteApprovals?: readonly OverwriteApproval[]
+}
+
 /** Atomically reconcile one complete proposal against current memory without model-supplied item ids. */
 export function mergeExtraction(
   document: SessionMemoryDocument,
   proposal: ExtractionProposal,
   evidenceSeqs: readonly number[],
   time: number,
+  options: MergeExtractionOptions = {},
 ): MergeExtractionResult {
-  const preferences = reconcileCards('preferences', document.preferences, proposal.preferences, evidenceSeqs, time)
+  const approvals = options.overwriteApprovals
+  const preferences = reconcileCards('preferences', document.preferences, proposal.preferences, evidenceSeqs, time, approvals)
   const instructions = reconcileCards(
-    'assistantInstructions', document.assistantInstructions, proposal.assistantInstructions, evidenceSeqs, time,
+    'assistantInstructions', document.assistantInstructions, proposal.assistantInstructions, evidenceSeqs, time, approvals,
   )
   const changes = [...preferences.changes, ...instructions.changes]
-  const profileChanged = normalized(document.userProfile.confirmed) !== normalized(proposal.userProfile.confirmed)
+  const proposedProfileChanged = normalized(document.userProfile.confirmed) !== normalized(proposal.userProfile.confirmed)
     || normalized(document.userProfile.inferred) !== normalized(proposal.userProfile.inferred)
+  const profileBefore = document.userProfile.confirmed.length === 0 && document.userProfile.inferred.length === 0
+    ? null
+    : `已确认：${document.userProfile.confirmed}\n观察：${document.userProfile.inferred}`
+  const profileAfter = `已确认：${proposal.userProfile.confirmed}\n观察：${proposal.userProfile.inferred}`
+  const profileApproval = profileBefore === null || !proposedProfileChanged
+    ? undefined
+    : overwriteDecision(approvals, 'userProfile', profileBefore, profileAfter)
+  const profileChanged = proposedProfileChanged && (profileBefore === null || profileApproval?.approved === true)
   const userProfile: SessionUserProfile = profileChanged
     ? {
       ...proposal.userProfile,
       evidenceSeqs: [...new Set([...document.userProfile.evidenceSeqs, ...evidenceSeqs])],
     }
     : document.userProfile
-  if (profileChanged) {
-    const before = document.userProfile.confirmed.length === 0 && document.userProfile.inferred.length === 0
-      ? null
-      : `已确认：${document.userProfile.confirmed}\n观察：${document.userProfile.inferred}`
-    changes.unshift(activity(
+  if (proposedProfileChanged && !profileChanged) {
+    changes.unshift(skippedOverwrite(
       'userProfile',
-      before,
-      `已确认：${userProfile.confirmed}\n观察：${userProfile.inferred}`,
       evidenceSeqs,
       time,
-      'Rewrote the compact profile from the complete current profile and newest user evidence.',
+      `Preserved the profile because overwrite review did not approve it: ${profileApproval?.reason ?? 'missing decision.'}`,
+    ))
+  } else if (profileChanged) {
+    changes.unshift(activity(
+      'userProfile',
+      profileBefore,
+      profileAfter,
+      evidenceSeqs,
+      time,
+      profileBefore === null
+        ? 'Created the compact profile from explicit user evidence.'
+        : `Rewrote the compact profile after explicit overwrite review: ${profileApproval?.reason ?? 'approved.'}`,
     ))
   }
+  const nextRelationship = { value: proposal.relationship }
+  const nextRoleplayPreset = { value: proposal.roleplayPreset }
   for (const [section, before, after] of [
     ['relationship', document.relationship, proposal.relationship],
     ['roleplayPreset', document.roleplayPreset, proposal.roleplayPreset],
   ] as const) {
     if (JSON.stringify(before) !== JSON.stringify(after)) {
+      const beforeText = objectText(before)
+      const afterText = objectText(after)
+      const decision = beforeText === null ? undefined : overwriteDecision(approvals, section, beforeText, afterText)
+      if (beforeText !== null && decision?.approved !== true) {
+        if (section === 'relationship') nextRelationship.value = before
+        else nextRoleplayPreset.value = before
+        changes.push(skippedOverwrite(
+          section,
+          evidenceSeqs,
+          time,
+          `Preserved the existing assignment because overwrite review did not approve it: ${decision?.reason ?? 'missing decision.'}`,
+        ))
+        continue
+      }
       changes.push(activity(
         section,
-        objectText(before),
-        objectText(after),
+        beforeText,
+        afterText,
         evidenceSeqs,
         time,
-        'Applied the newest explicit session assignment over the prior value.',
+        beforeText === null
+          ? 'Applied a new explicit session assignment.'
+          : `Applied an explicit session assignment after overwrite review: ${decision?.reason ?? 'approved.'}`,
       ))
     }
   }
-  const changed = changes.length > 0
+  // Audit-only skip records must not advance the document revision or turn a
+  // rejected overwrite into an apparent mutation.
+  const changed = changes.some(change => change.operation !== 'skip')
   const changedSections = new Set(changes.map(change => change.section))
   for (const atom of proposal.atoms) {
     if (atom.disposition === 'skipped' || atom.section === null || !changedSections.has(atom.section)) {
@@ -357,8 +577,8 @@ export function mergeExtraction(
       userProfile,
       preferences: preferences.items,
       assistantInstructions: instructions.items,
-      relationship: proposal.relationship,
-      roleplayPreset: proposal.roleplayPreset,
+      relationship: nextRelationship.value,
+      roleplayPreset: nextRoleplayPreset.value,
       updatedAt: changed ? time : document.updatedAt,
     },
     changes,

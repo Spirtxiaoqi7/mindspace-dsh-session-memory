@@ -282,7 +282,7 @@ export function SessionMemorySection({ useSessions, remote, commands, t }: Sessi
           <label><span>保留末尾原文（tokens）</span><input type="number" min="4096" step="1024" value={draft.compactionPolicy.retainTokens} onChange={(event) => setDraft({ ...draft, compactionPolicy: { ...draft.compactionPolicy, retainTokens: Math.max(4096, Number(event.target.value) || 4096) } })} /></label>
           <label><span>摘要上限（tokens）</span><input type="number" min="512" max="8192" step="256" value={draft.compactionPolicy.maxTokens} onChange={(event) => setDraft({ ...draft, compactionPolicy: { ...draft.compactionPolicy, maxTokens: Math.min(8192, Math.max(512, Number(event.target.value) || 512)) } })} /></label>
         </div>
-        <p>默认 V4：约 164K 触发、保留 64K、摘要最多 6000 tokens。应用后下一轮请求即时按此会话策略执行。</p>
+        <p>按当前模型上报的上下文窗口计算；保留末尾原文应小于触发预算。应用后下一轮请求即时按此会话策略执行。</p>
         <button className={css.subtleAction} type="button" onClick={() => void applyCompactionPolicy()}>应用压缩设置</button>
         <button className={css.subtleAction} type="button" disabled={selected === undefined || commands === undefined} onClick={async () => {
           if (selected === undefined || commands === undefined) return

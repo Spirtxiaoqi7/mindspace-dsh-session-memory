@@ -9,6 +9,15 @@
 - id: ui-session-memory
   disabled: true
 
+# Web's stock overlay disables the engine and its /compact command. The
+# Mindspace policy card is a real per-session control, so restore both after
+# that overlay has composed; the engine remains the sole surface rewriter.
+- id: compaction-basic
+  disabled: false
+
+- id: command-compact
+  disabled: false
+
 - insert:
     - id: mindspace-session-memory
       name: mindspace-dsh-session-memory
@@ -17,4 +26,5 @@
         maxItemsPerSection: 3
         maxProfileCharacters: 300
         autoExtract: true
-        extractionMaxTokens: 3072
+        autoExtractBelowUtilization: 0.2
+        extractionMaxTokens: 6000
