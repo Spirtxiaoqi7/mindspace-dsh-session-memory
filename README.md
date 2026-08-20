@@ -153,12 +153,13 @@ The initial release targets the public DeepSeek Harness `0.1.0-rc` family and No
 22.19+ or Node 24+. Harness is currently a developer preview; breaking upstream
 changes may require a plugin update.
 
-Recent DSH builds also ship experimental in-tree `session-memory` fields and a
-matching settings entry. This plugin deliberately disables those in-tree rows in
-its profile patch before installing its own single owner for the Remote, event
-projection, prompt integration, and editable UI. Future extensions must keep one
-owner per session-memory schema/Remote namespace; enabling both implementations
-causes duplicate registration or competing writers.
+The RC8 compatibility line is tested against DeepSeek Harness `0.1.0-rc.8` in
+an isolated profile. It owns the distinct `mindspaceSessionMemory` Remote and
+does not patch or disable in-tree memory rows. The session compaction controls
+are applied through a plugin-owned adapter around the stock compaction service,
+so the Harness checkout remains unmodified. Do not install it together with a
+legacy in-tree Mindspace memory implementation: migration keeps one owner for
+each session-memory schema and Remote namespace.
 
 ## Development
 

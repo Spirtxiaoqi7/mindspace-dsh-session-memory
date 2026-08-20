@@ -16,6 +16,7 @@ import { Remote, TypertRemoteService } from '@deepseek-ai/dsh-typert-protocol'
 import { TYPERT } from '../generated/typert.host.js'
 import type { SessionMemoryFoldState } from './fold.ts'
 import { applySessionMemoryEvent, emptySessionMemoryFoldState, foldCompactionPolicy, foldSessionMemory, normalizeCompactionPolicy, sessionMemoryView } from './fold.ts'
+import { installSessionCompactionPolicyBridge } from './compaction-bridge.ts'
 import {
   DEFAULT_PROFILE_CHARACTERS,
   DEFAULT_RELATIONSHIP_MISSION,
@@ -361,6 +362,7 @@ export class SessionMemoryService extends TypertRemoteService {
     }
     ctx.systemPrompt.section({ name: 'tool:session-memory', order: 113, text: MEMORY_TOOL_GUIDANCE })
     this.registerTools()
+    installSessionCompactionPolicyBridge(ctx)
     ctx.inject(['sessionProjections'], (projectionCtx) => {
       projectionCtx.sessionProjections.register<'session-memory', SessionMemoryFoldState>({
         key: 'session-memory', schema: viewSchema, init: emptySessionMemoryFoldState,

@@ -1,13 +1,8 @@
-# Session-isolated personalization memory for a DeepSeek Harness Web profile.
-# This out-of-tree bundle owns its service, Remote contract, and settings entry.
-# Current DSH base/web bundles also ship an experimental in-tree memory service
-# under the same Remote namespace. Disable those rows here so a clean profile
-# never mounts two `sessionMemory` providers.
-- id: session-memory-governance
-  disabled: true
-
-- id: ui-session-memory
-  disabled: true
+# Session-isolated personalization memory for DeepSeek Harness RC8 Web
+# profiles. This out-of-tree bundle owns the `mindspaceSessionMemory` Remote
+# namespace and settings entry. It deliberately does not patch or disable any
+# host memory rows: RC8 has no built-in rows with the old experimental ids, and
+# referring to absent rows makes a clean profile emit misleading warnings.
 
 # Web's stock overlay disables the engine and its /compact command. The
 # Mindspace policy card is a real per-session control, so restore both after

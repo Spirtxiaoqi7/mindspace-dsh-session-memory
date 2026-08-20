@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.2.26-rc8 - 2026-08-20
+
+- Added a clean RC8 compatibility path: the bundle no longer patches absent
+  in-tree memory rows, so an RC8 profile starts without stale-row warnings.
+- Moved the session-specific compaction policy adapter into this package. It
+  applies a temporary, serialized policy to the stock RC8 compaction service;
+  no `compaction-basic`, bundle, Remote, or TypeScript source patch is needed
+  in the Harness checkout.
+- This compatibility line targets DeepSeek Harness `0.1.0-rc.8` and is tested
+  from an isolated `DSH_HOME`; it must not be installed together with a legacy
+  in-tree Mindspace memory implementation.
+
 ## 0.2.25 - 2026-08-20
 
 - Re-enabled DSH's compaction engine and `/compact` command after the Web
