@@ -1,6 +1,6 @@
 {
   "name": "mindspace-dsh-session-memory",
-  "version": "0.2.26-rc8",
+  "version": "0.2.27-rc8",
   "description": "Editable, session-isolated personalization memory for DeepSeek Harness",
   "type": "module",
   "license": "MIT",

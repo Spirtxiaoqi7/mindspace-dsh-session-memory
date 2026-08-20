@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.2.27-rc8 - 2026-08-20
+
+- Fixed session-identity drift in mission-bearing conversations. The scoped
+  prompt assembly now replaces the Web deployment's “coding agent” persona
+  with a capability-only statement while retaining the user-assigned identity
+  as the single identity declaration.
+- Strengthened the session identity contract across coding, research,
+  administration, planning, and roleplay. Those modes are functions, not
+  replacement personas.
+- Added a compaction-continuity directive: checkpoints retain transient work
+  state and must not restate, reinterpret, downgrade, or overwrite the active
+  session identity.
+- Clarified the documentation: DSH passes the current system context into its
+  cache-aligned summarization call; this plugin directs the checkpoint not to
+  persist independent identity and personalization layers.
+
 ## 0.2.26-rc8 - 2026-08-20
 
 - Added a clean RC8 compatibility path: the bundle no longer patches absent

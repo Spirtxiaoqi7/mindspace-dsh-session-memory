@@ -27,7 +27,7 @@ import {
   reviewOverwrites,
   turnExtractionInput,
 } from './extraction.ts'
-import { renderSessionMemory, renderSessionMissionIdentity } from './render.ts'
+import { applyMissionCapabilityPersona, renderSessionMemory, renderSessionMissionIdentity } from './render.ts'
 import { DEFAULT_AUTO_EXTRACT_BELOW_UTILIZATION, sessionMemoryUtilization } from './usage.ts'
 import type {
   ContextCompactionPolicy,
@@ -62,7 +62,7 @@ export {
   reviewOverwrites,
   turnExtractionInput,
 } from './extraction.ts'
-export { renderSessionMemory, renderSessionMissionIdentity } from './render.ts'
+export { applyMissionCapabilityPersona, renderMissionCapabilityPersona, renderSessionMemory, renderSessionMissionIdentity } from './render.ts'
 export { DEFAULT_AUTO_EXTRACT_BELOW_UTILIZATION, sessionMemoryUtilization } from './usage.ts'
 export type { SessionMemoryUsageLimits } from './usage.ts'
 
@@ -681,6 +681,16 @@ export class SessionMemoryService extends TypertRemoteService {
       order: -100,
       text: () => renderSessionMissionIdentity(foldSessionMemory(agent.session.events))
         ?? 'You are an AI agent powered by DeepSeek Harness.',
+    })
+    // The Web bundle's deployment persona says "You are a coding agent". That
+    // is useful as a capability description in ordinary sessions, but it is a
+    // competing identity declaration after the user has assigned this window a
+    // relationship/mission. The official assembly waterfall is scoped to this
+    // agent, so it can replace only that assembled slot and leave all Harness
+    // safety, tool, and runtime sections intact.
+    agent.ctx.on('system-prompt/assemble', async (assembly, _context, next) => {
+      const resolved = await next()
+      return applyMissionCapabilityPersona(resolved, foldSessionMemory(agent.session.events))
     })
     agent.ctx.systemPrompt.section({
       name: 'session-memory:personalization',

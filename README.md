@@ -10,11 +10,29 @@ personalization memory. It keeps continuity and user control in the same place:
 - a roughly 300-character profile separating confirmed user facts from AI observations, while DSH compaction stays internal;
 - editable preferences and assistant instructions consolidated into at most three categorized cards each;
 - a relationship identity and a purpose for each conversation;
+- an identity-continuity guard: a session mission remains the model's identity
+  while coding and other work are capabilities, rather than competing personas;
 - an optional roleplay preset isolated to one session;
 - model-facing `get_session_memory` and `update_session_memory` tools;
 - conservative automatic extraction from explicit user statements;
 - category-based conflict replacement with stable card ids and a visible append/merge/replace/skip audit trail;
 - a one-time, optional role/purpose/style question when a new session has no personalization.
+
+## 0.2.27-rc8: Identity continuity across work and compaction
+
+When a session has an explicit relationship/mission, it now supplies the only
+identity declaration for that agent scope. The Web deployment's former
+“coding agent” persona is replaced in that scope by a role-neutral statement
+of available Harness capabilities. Sessions without a mission retain the
+ordinary Harness persona unchanged.
+
+- Coding, research, planning, administration, and roleplay are explicitly
+  framed as ways to carry out the session mission, never an identity switch.
+- The same identity section instructs compaction to retain transient task and
+  conversational state only. It must not turn the identity into a historical
+  “user request”, repeat it, or overwrite it in a checkpoint.
+- This changes prompt composition only. Harness tool availability, sandbox,
+  approvals, and safety policy are not weakened or replaced.
 
 ## 0.2.9: Session-scoped context compaction
 
@@ -23,8 +41,10 @@ enable it, set the trigger ratio, retained recent context, and summary limit, or
 manual compaction before the threshold is reached. The policy is persisted as session
 events and never changes another conversation.
 
-- Only conversation messages are summarized; system, tool, personalization,
-  relationship-mission, and roleplay layers are excluded.
+- The conversation surface is condensed while the summarizer still receives
+  the current system context for cache alignment. The session identity
+  explicitly instructs it not to copy, reinterpret, or overwrite identity,
+  profile, relationship, or roleplay state in a checkpoint.
 - The prior summary is included as input to avoid losing durable context across
   repeated compactions.
 - The compaction prompt prioritizes facts, decisions, constraints, open work,

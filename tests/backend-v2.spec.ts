@@ -7,7 +7,7 @@ import {
 } from '../src/memory/fold.ts'
 import { mergeAssistantIdentity, mergeExtraction, parseExtraction, parseOverwriteReview } from '../src/memory/extraction.ts'
 import { sessionMemoryUtilization } from '../src/memory/usage.ts'
-import { renderSessionMemory, renderSessionMissionIdentity } from '../src/memory/render.ts'
+import { applyMissionCapabilityPersona, renderMissionCapabilityPersona, renderSessionMemory, renderSessionMissionIdentity } from '../src/memory/render.ts'
 import type { LegacySessionMemoryDocumentV1 } from '../src/memory/domain.ts'
 import type { ExtractionProposal } from '../src/memory/extraction.ts'
 import type { SessionMemoryDocument } from '../src/memory/types.ts'
@@ -54,8 +54,35 @@ describe('V2 complete-state extraction', () => {
     const view = { document, memoryActivity: [] }
     expect(renderSessionMissionIdentity(view)).toContain('You are private companion in this conversation.')
     expect(renderSessionMissionIdentity(view)).toContain('Your primary mission is: help plan this trip.')
+    expect(renderSessionMissionIdentity(view)).toContain('continuing first-person identity')
+    expect(renderSessionMissionIdentity(view)).toContain('do not restate, reinterpret, downgrade, or replace it in the checkpoint')
+    expect(renderMissionCapabilityPersona(view)).toContain('capabilities for carrying out the current session mission')
     expect(renderSessionMemory(view)).not.toContain('Current relationship and purpose')
     expect(renderSessionMissionIdentity({ document: emptySessionMemory(), memoryActivity: [] })).toBeUndefined()
+    expect(renderMissionCapabilityPersona({ document: emptySessionMemory(), memoryActivity: [] })).toBeUndefined()
+  })
+
+  it('replaces only the deployment coding persona in a mission-bearing prompt assembly', () => {
+    const document: SessionMemoryDocument = {
+      ...emptySessionMemory(),
+      relationship: { role: 'companion', mission: 'help with work', guidance: '' },
+    }
+    const assembly = {
+      sections: [
+        { name: 'harness:identity', text: 'SESSION IDENTITY' },
+        { name: 'deployment:persona', text: 'You are a coding agent.' },
+        { name: 'tool:approval', text: 'TOOL SAFETY' },
+      ],
+      contexts: [], tools: [], variables: {},
+    }
+    const transformed = applyMissionCapabilityPersona(assembly, { document, memoryActivity: [] })
+    expect(transformed.sections).toEqual([
+      { name: 'harness:identity', text: 'SESSION IDENTITY' },
+      expect.objectContaining({ name: 'deployment:persona', text: expect.stringContaining('capabilities') }),
+      { name: 'tool:approval', text: 'TOOL SAFETY' },
+    ])
+    expect(JSON.stringify(transformed.sections)).not.toContain('You are a coding agent.')
+    expect(applyMissionCapabilityPersona(assembly, { document: emptySessionMemory(), memoryActivity: [] })).toBe(assembly)
   })
 
   it('adds an assistant nickname without silently enabling a disabled preset', () => {
