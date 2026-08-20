@@ -34,7 +34,7 @@ ordinary Harness persona unchanged.
 - This changes prompt composition only. Harness tool availability, sandbox,
   approvals, and safety policy are not weakened or replaced.
 
-## 0.2.9: Session-scoped context compaction
+## Session-scoped context compaction
 
 The Memory Center now exposes a session-isolated context-compaction policy. Users can
 enable it, set the trigger ratio, retained recent context, and summary limit, or run a
@@ -55,7 +55,7 @@ events and never changes another conversation.
 This is a community plugin and is not an official DeepSeek project. The repository
 artwork is supplied by the project owner and is used only to identify this repository.
 
-## 0.2.0 update and contribution
+## Memory-governance foundation (introduced in 0.2.0)
 
 Version 0.2.0 turns the first editable-memory prototype into a governed,
 session-scoped personalization layer for DeepSeek Harness:

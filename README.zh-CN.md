@@ -29,7 +29,7 @@
   或用 checkpoint 覆盖当前身份。
 - 此改动只调整提示词组合；Harness 的工具、沙箱、审批与安全策略不被削弱或替换。
 
-## 0.2.9：会话级上下文压缩
+## 功能：会话级上下文压缩
 
 “上下文压缩”位于记忆中心顶部，并且严格按会话隔离。用户可以直接启用或关闭、
 调节触发阈值、保留最近上下文和摘要上限，也可以在任何时候手动执行一次压缩。
@@ -46,13 +46,13 @@
 
 ## RC8 兼容线
 
-`0.2.26-rc8` 在独立 `DSH_HOME` 中针对 DeepSeek Harness `0.1.0-rc.8` 验证。
+当前发布线 `0.2.27-rc8` 已在独立 `DSH_HOME` 中针对 DeepSeek Harness `0.1.0-rc.8` 验证。
 它独占 `mindspaceSessionMemory` Remote，不再引用或禁用 RC8 中不存在的旧内置记忆
 条目。会话级压缩策略由插件侧适配器在调用官方压缩服务时临时、串行地应用，因此无需
 修改 Harness 的 `compaction-basic`、bundle、Remote 或 TypeScript 源码。不要与旧的
 内嵌 Mindspace Memory 同时安装；迁移时每个记忆 schema 与 Remote 只能保留一个所有者。
 
-## 0.2.0 更新与贡献
+## 记忆治理基础（始于 0.2.0）
 
 0.2.0 将首版“可编辑记忆”原型升级为 DeepSeek Harness 的会话级记忆治理层：
 
