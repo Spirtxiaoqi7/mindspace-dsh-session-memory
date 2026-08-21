@@ -4,14 +4,10 @@
 # host memory rows: RC8 has no built-in rows with the old experimental ids, and
 # referring to absent rows makes a clean profile emit misleading warnings.
 
-# Web's stock overlay disables the engine and its /compact command. The
-# Mindspace policy card is a real per-session control, so restore both after
-# that overlay has composed; the engine remains the sole surface rewriter.
-- id: compaction-basic
-  disabled: false
-
-- id: command-compact
-  disabled: false
+# RC8 Web owns compaction inside each standing Agent preset. Do not revive the
+# disabled host-plane copies: doing so creates a second engine while the real
+# conversation keeps using the preset's default policy. The plugin resolves and
+# adapts the provider through `agent.ctx` instead.
 
 - insert:
     - id: mindspace-session-memory
@@ -20,6 +16,9 @@
         maxTextBytes: 4096
         maxItemsPerSection: 3
         maxProfileCharacters: 300
-        autoExtract: true
+        # DSH RC8 currently has no out-of-tree event-registration surface.
+        # Keep model-directed writes/manual editing only until persistence is
+        # moved fully off the canonical session event log.
+        autoExtract: false
         autoExtractBelowUtilization: 0.2
         extractionMaxTokens: 6000

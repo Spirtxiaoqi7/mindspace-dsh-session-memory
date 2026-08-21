@@ -17,6 +17,8 @@ personalization memory. It keeps continuity and user control in the same place:
 - conservative automatic extraction from explicit user statements;
 - category-based conflict replacement with stable card ids and a visible append/merge/replace/skip audit trail;
 - a one-time, optional role/purpose/style question when a new session has no personalization.
+- archived conversations disappear from the Memory Center selector immediately;
+  their data is retained only for a deliberate session restore, never injected or editable while archived.
 
 ## 0.2.27-rc8: Identity continuity across work and compaction
 
@@ -38,8 +40,8 @@ ordinary Harness persona unchanged.
 
 The Memory Center now exposes a session-isolated context-compaction policy. Users can
 enable it, set the trigger ratio, retained recent context, and summary limit, or run a
-manual compaction before the threshold is reached. The policy is persisted as session
-events and never changes another conversation.
+manual compaction before the threshold is reached. The policy is persisted in the
+session-keyed sidecar and never changes another conversation.
 
 - The conversation surface is condensed while the summarizer still receives
   the current system context for cache alignment. The session identity
@@ -69,7 +71,8 @@ session-scoped personalization layer for DeepSeek Harness:
   handled/skipped ledger, so partial model output is rejected atomically;
 - append, merge, replace, and skip activity records expose source message sequences,
   before/after values, reasons, and timestamps;
-- V1 session events remain replayable and migrate into the V2 document shape;
+- legacy V1 and V2 session-memory events are imported once into a durable,
+  session-keyed sidecar without rewriting the conversation log;
 - repeated legacy fallback categories are repaired during replay instead of locking all later writes;
 - assistant names, nicknames, self-designations, and relationship-specific titles have a dedicated
   identity action and are never routed into the user's profile or preferences;
@@ -77,7 +80,7 @@ session-scoped personalization layer for DeepSeek Harness:
   conversation.
 
 The contribution is deliberately tree-out: one installable dual-face DSH bundle owns
-the Host service, event projection, prompt/tool integration, extraction hook, Typert
+the Host service, sidecar persistence, prompt/tool integration, extraction hook, Typert
 descriptor, Remote, and settings UI. It does not replace DSH compaction semantics or
 require an upstream source patch, making the memory-governance layer independently
 installable, auditable, and removable.
@@ -127,7 +130,7 @@ represent the current `main` feature set.
 ## How it composes
 
 The package is one DSH bundle with one dual-face row. On the Host it mounts the
-memory service, projection, prompt contribution, model tools, extraction hook, and
+memory service, sidecar persistence, prompt contribution, model tools, extraction hook, and
 Typert descriptor. The same package declares its Web client contribution, which
 self-mounts the generated Remote descriptor and registers the settings page.
 
@@ -140,9 +143,12 @@ corepack pnpm dsh plugin --profile web remove mindspace-dsh-session-memory
 
 ## Data and model calls
 
-Memory changes are appended to the selected DSH session event log. The UI reads and
-replaces a whole versioned document with optimistic revision checks. Automatic
-extraction is a cold-start fallback: it may make one auxiliary model request after a
+Memory changes live in an atomic sidecar at
+`DSH_HOME/mindspace-session-memory/v1`, keyed by session id; the canonical DSH
+conversation JSONL is never modified by this package. Legacy memory events are
+imported once on first access. The UI reads and replaces a whole versioned document
+with optimistic revision checks. Automatic extraction is opt-in (disabled by default):
+when enabled it may make one auxiliary model request after a
 completed root-agent turn only while editable memory utilization is below 20%, and
 skips a turn that already made a model-owned memory-tool write. Above that threshold,
 the primary model alone decides whether to use the memory tools.
@@ -152,8 +158,8 @@ state plus a handled/skipped ledger for every extracted atom; invalid or partial
 is rejected atomically. Confirmed facts and cautious observations remain separate, and
 inferred sensitive facts are rejected by policy.
 
-Disable automatic extraction in a later profile patch if you want tool/manual writes
-only:
+Enable automatic extraction in a later profile patch only if you want the cold-start
+fallback in addition to model-tool/manual writes:
 
 ```yaml
 - id: mindspace-session-memory
@@ -173,11 +179,12 @@ The initial release targets the public DeepSeek Harness `0.1.0-rc` family and No
 22.19+ or Node 24+. Harness is currently a developer preview; breaking upstream
 changes may require a plugin update.
 
-The RC8 compatibility line is tested against DeepSeek Harness `0.1.0-rc.8` in
-an isolated profile. It owns the distinct `mindspaceSessionMemory` Remote and
-does not patch or disable in-tree memory rows. The session compaction controls
-are applied through a plugin-owned adapter around the stock compaction service,
-so the Harness checkout remains unmodified. Do not install it together with a
+Version `0.2.35` is qualified against DeepSeek Harness `0.1.1-rc.2` and declares
+the stable `0.1.1` line as its compatibility floor. It owns the distinct
+`mindspaceSessionMemory` Remote and does not patch or disable in-tree memory rows.
+Because DSH owns compaction inside standing Agent presets, the plugin resolves the
+stock provider through each live `agent.ctx`; it never revives the disabled
+host-plane engine. The Harness checkout therefore remains unmodified. Do not install it together with a
 legacy in-tree Mindspace memory implementation: migration keeps one owner for
 each session-memory schema and Remote namespace.
 
