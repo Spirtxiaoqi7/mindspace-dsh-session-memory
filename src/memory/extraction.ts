@@ -605,7 +605,7 @@ export function turnExtractionInput(
   return sourceSeqs.length === 0 ? undefined : { input: rows.join('\n\n'), sourceSeqs }
 }
 
-/** Run and durably log one auxiliary extraction request. */
+/** Run one auxiliary extraction request. Durable state is owned by the sidecar store. */
 export async function extractTurn(
   ctx: Context,
   agent: Agent,
@@ -619,16 +619,6 @@ export async function extractTurn(
   const route = agent.session.requestHeader()?.config
   if (input === undefined || route === undefined) return undefined
   const extractionInput = `${input.input}\n\nCURRENT_SESSION_MEMORY:\n${JSON.stringify(current)}`
-  agent.session.append('session-memory/extraction-request', {
-    version: 2,
-    turn,
-    provider: route.provider,
-    model: route.model,
-    system: EXTRACTION_SYSTEM,
-    input: extractionInput,
-    maxTokens,
-    sourceSeqs: input.sourceSeqs,
-  }, { ignorable: true })
   const assembler = new BlockAssembler()
   const messages = [createUserMessage({
     content: [{ type: 'text', text: extractionInput }],
@@ -647,12 +637,5 @@ export async function extractTurn(
   const blocks = assembler.blocks()
   const text = blocks.filter(block => block.type === 'text').map(block => block.text).join('').trim()
   const proposal = parseExtraction(text)
-  agent.session.append('session-memory/extraction-result', {
-    version: 2,
-    turn,
-    rawOutput: blocks,
-    accepted: proposal !== undefined,
-    sourceSeqs: input.sourceSeqs,
-  }, { ignorable: true })
   return proposal
 }

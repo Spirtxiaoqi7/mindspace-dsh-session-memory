@@ -7,16 +7,16 @@ import type {} from '@deepseek-ai/dsh-typert-registry'
 import z from '@deepseek-ai/schemastery'
 import { z as zod } from 'zod'
 import type { Agent } from '@deepseek-ai/dsh-agent'
-import type { Session, SessionEvent } from '@deepseek-ai/dsh-session'
+import type { Session } from '@deepseek-ai/dsh-session'
 import type {} from '@deepseek-ai/dsh-system-prompt'
 import type {} from '@deepseek-ai/dsh-session-projection'
 import { defineTool } from '@deepseek-ai/dsh-tools'
 import type { JsonValue } from '@deepseek-ai/dsh-session'
 import { Remote, TypertRemoteService } from '@deepseek-ai/dsh-typert-protocol'
 import { TYPERT } from '../generated/typert.host.js'
-import type { SessionMemoryFoldState } from './fold.ts'
-import { applySessionMemoryEvent, emptySessionMemoryFoldState, foldCompactionPolicy, foldSessionMemory, normalizeCompactionPolicy, sessionMemoryView } from './fold.ts'
+import { applySessionMemoryEvent, emptySessionMemoryFoldState, normalizeCompactionPolicy, sessionMemoryView } from './fold.ts'
 import { installSessionCompactionPolicyBridge } from './compaction-bridge.ts'
+import { SessionMemorySidecar } from './sidecar.ts'
 import {
   DEFAULT_PROFILE_CHARACTERS,
   DEFAULT_RELATIONSHIP_MISSION,
@@ -339,13 +339,14 @@ export class SessionMemoryService extends TypertRemoteService {
     maxTextBytes: z.number().step(1).min(1).default(4096),
     maxItemsPerSection: z.number().step(1).min(1).max(MAX_MEMORY_CARDS).default(MAX_MEMORY_CARDS),
     maxProfileCharacters: z.number().step(1).min(1).default(DEFAULT_PROFILE_CHARACTERS),
-    autoExtract: z.boolean().default(true),
+    autoExtract: z.boolean().default(false),
     autoExtractBelowUtilization: z.number().min(0).max(1).default(DEFAULT_AUTO_EXTRACT_BELOW_UTILIZATION),
     extractionMaxTokens: z.number().step(1).min(1).default(6000),
   })
 
   private readonly resolved: ResolvedConfig
   private readonly installedAgents = new WeakSet<Agent>()
+  private readonly store = new SessionMemorySidecar()
 
   constructor(ctx: Context, config: Config = {}) {
     super(ctx, 'mindspaceSessionMemory')
@@ -356,19 +357,13 @@ export class SessionMemoryService extends TypertRemoteService {
       maxTextBytes: config.maxTextBytes ?? 4096,
       maxItemsPerSection: Math.min(config.maxItemsPerSection ?? MAX_MEMORY_CARDS, MAX_MEMORY_CARDS),
       maxProfileCharacters: config.maxProfileCharacters ?? DEFAULT_PROFILE_CHARACTERS,
-      autoExtract: config.autoExtract ?? true,
+      autoExtract: config.autoExtract ?? false,
       autoExtractBelowUtilization: config.autoExtractBelowUtilization ?? DEFAULT_AUTO_EXTRACT_BELOW_UTILIZATION,
       extractionMaxTokens: config.extractionMaxTokens ?? 6000,
     }
     ctx.systemPrompt.section({ name: 'tool:session-memory', order: 113, text: MEMORY_TOOL_GUIDANCE })
     this.registerTools()
-    installSessionCompactionPolicyBridge(ctx)
-    ctx.inject(['sessionProjections'], (projectionCtx) => {
-      projectionCtx.sessionProjections.register<'session-memory', SessionMemoryFoldState>({
-        key: 'session-memory', schema: viewSchema, init: emptySessionMemoryFoldState,
-        apply: applySessionMemoryEvent, view: sessionMemoryView, stateVersion: 2,
-      })
-    })
+    installSessionCompactionPolicyBridge(ctx, agent => this.store.read(agent.session).compactionPolicy)
     ctx.inject(['systemPrompt'], (promptCtx) => {
       for (const agent of ctx.agents.roots()) this.installPrompt(agent)
       promptCtx.on('agent/created', ({ agent }) => { if (ctx.agents.roots().includes(agent)) this.installPrompt(agent) })
@@ -377,20 +372,14 @@ export class SessionMemoryService extends TypertRemoteService {
       ctx.inject(['llm'], (llmCtx) => {
         llmCtx.on('agent/turn-stopping', async ({ agent, turn, signal }) => {
           if (!ctx.agents.roots().includes(agent)) return
-          if (agent.session.events.some(
-            event => event.type === 'session-memory/extraction-result' && event.data.turn === turn,
-          )) return
           try {
-            const current = foldSessionMemory(agent.session.events).document
+            const currentView = this.get(agent)
+            const current = currentView.document
             if (sessionMemoryUtilization(current, this.resolved) >= this.resolved.autoExtractBelowUtilization) return
             if (turnAlreadyWroteSessionMemory(agent.session.events, turn)) return
             const proposal = await extractTurn(llmCtx, agent, turn, current, this.resolved.extractionMaxTokens, signal)
             if (proposal === undefined) return
-            const result = agent.session.events.findLast(
-              (event): event is SessionEvent<'session-memory/extraction-result'> =>
-                event.type === 'session-memory/extraction-result' && event.data.turn === turn,
-            )
-            const sourceSeqs = result?.data.sourceSeqs ?? []
+            const sourceSeqs = turnExtractionInput(agent.session.events, turn)?.sourceSeqs ?? []
             const provisional = mergeExtraction(current, proposal, sourceSeqs, Date.now())
             const overwriteCandidates = provisional.changes
               .filter(change => change.operation === 'replace' && change.before !== null)
@@ -428,9 +417,10 @@ export class SessionMemoryService extends TypertRemoteService {
               ctx.logger.warn(`session-memory extraction rejected for session ${agent.id}: ${validated.message}`)
               return
             }
-            agent.session.append('session-memory/change', {
-              version: 2, operation: 'replace', document: validated, changes: merged.changes,
-            }, { ignorable: true })
+            this.store.replace(agent.session, {
+              document: validated,
+              memoryActivity: [...currentView.memoryActivity, ...merged.changes],
+            })
           } catch (error: unknown) {
             const message = error instanceof Error ? error.message : String(error)
             ctx.logger.warn(`session-memory extraction failed for session ${agent.id}: ${message}`)
@@ -443,7 +433,7 @@ export class SessionMemoryService extends TypertRemoteService {
   @Remote('get')
   get(agent: Agent): SessionMemoryView {
     this.assertLive(agent)
-    return foldSessionMemory(agent.session.events)
+    return this.store.read(agent.session).view
   }
 
   @Remote('replace')
@@ -455,8 +445,7 @@ export class SessionMemoryService extends TypertRemoteService {
   @Remote('getCompactionPolicy')
   getCompactionPolicy(agent: Agent): ContextCompactionPolicy {
     this.assertLive(agent)
-    // Always return a fresh JSON-safe, complete object for the strict Remote codec.
-    return normalizeCompactionPolicy(foldCompactionPolicy(agent.session.events))
+    return normalizeCompactionPolicy(this.store.read(agent.session).compactionPolicy)
   }
 
   /** Persist one session's policy immediately without rewriting its memory document. */
@@ -473,9 +462,7 @@ export class SessionMemoryService extends TypertRemoteService {
       throw new Error('maxTokens must be an integer between 512 and 8192')
     }
     const next: ContextCompactionPolicy = { ...policy, updatedAt: Date.now() }
-    agent.session.append('mindspace-compaction/policy' as never, { version: 1, ...next } as never, { ignorable: true })
-    await this.ctx.sessions.flush(agent.session)
-    return next
+    return this.store.setPolicy(agent.session, next).compactionPolicy
   }
 
   private async commit(
@@ -484,7 +471,8 @@ export class SessionMemoryService extends TypertRemoteService {
     sourceSeqs: readonly number[],
   ): Promise<SessionMemoryMutationResult> {
     this.assertLive(agent)
-    const current = foldSessionMemory(agent.session.events).document
+    const currentView = this.get(agent)
+    const current = currentView.document
     if (request.expectedRevision !== current.revision) {
       return failure('stale-revision', `expected revision ${request.expectedRevision}; current revision is ${current.revision}`)
     }
@@ -492,12 +480,13 @@ export class SessionMemoryService extends TypertRemoteService {
     const resolved = resolveDocument(request, current.revision + 1, time, this.resolved)
     if ('code' in resolved) return { ok: false, error: resolved }
     const changes = auditManualChange(current, resolved, time, sourceSeqs)
-    if (changes.length === 0) return { ok: true, value: foldSessionMemory(agent.session.events) }
-    if (changes.length > 0) {
-      agent.session.append('session-memory/change', { version: 2, operation: 'replace', document: resolved, changes }, { ignorable: true })
+    if (changes.length === 0) return { ok: true, value: currentView }
+    const view: SessionMemoryView = {
+      document: resolved,
+      memoryActivity: [...currentView.memoryActivity, ...changes],
     }
-    await this.ctx.sessions.flush(agent.session)
-    return { ok: true, value: foldSessionMemory(agent.session.events) }
+    this.store.replace(agent.session, view)
+    return { ok: true, value: view }
   }
 
   private assertLive(agent: Agent): void {
@@ -515,7 +504,7 @@ export class SessionMemoryService extends TypertRemoteService {
         summary_max_tokens: { type: 'number', description: 'Maximum checkpoint size, 512 through 8192. Default 6000.' },
       },
       output: { schema: { type: 'json' }, render: (_args, value) => [{ type: 'text', text: JSON.stringify(value) }] },
-      execute: (args, exec): JsonValue => {
+      execute: async (args, exec): Promise<JsonValue> => {
         if (exec.agent === undefined) throw new Error('configure_context_compaction requires an Agent-backed session')
         const percent = args.threshold_percent ?? 16.4
         const retainTokens = args.retain_tokens ?? 64_000
@@ -531,8 +520,7 @@ export class SessionMemoryService extends TypertRemoteService {
           maxTokens,
           updatedAt: Date.now(),
         }
-        exec.agent.session.append('mindspace-compaction/policy' as never, policy as never, { ignorable: true })
-        return policy as unknown as JsonValue
+        return (await this.setCompactionPolicy(exec.agent, policy)) as unknown as JsonValue
       },
     }))
     this.ctx.tools.register(defineTool({
@@ -679,7 +667,7 @@ export class SessionMemoryService extends TypertRemoteService {
     agent.ctx.systemPrompt.section({
       name: 'harness:identity',
       order: -100,
-      text: () => renderSessionMissionIdentity(foldSessionMemory(agent.session.events))
+      text: () => renderSessionMissionIdentity(this.get(agent))
         ?? 'You are an AI agent powered by DeepSeek Harness.',
     })
     // The Web bundle's deployment persona says "You are a coding agent". That
@@ -690,13 +678,13 @@ export class SessionMemoryService extends TypertRemoteService {
     // safety, tool, and runtime sections intact.
     agent.ctx.on('system-prompt/assemble', async (assembly, _context, next) => {
       const resolved = await next()
-      return applyMissionCapabilityPersona(resolved, foldSessionMemory(agent.session.events))
+      return applyMissionCapabilityPersona(resolved, this.get(agent))
     })
     agent.ctx.systemPrompt.section({
       name: 'session-memory:personalization',
       order: 10,
       text: () => {
-        const view = foldSessionMemory(agent.session.events)
+        const view = this.get(agent)
         const turns = agent.session.events.filter(event => event.type === 'turn/start').length
         const onboarding = turns === 1 && isEmptyDocument(view.document) ? `\n\n${NEW_SESSION_ONBOARDING}` : ''
         return `${renderSessionMemory(view)}${onboarding}`

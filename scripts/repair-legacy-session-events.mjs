@@ -9,6 +9,9 @@ const customTypes = new Set([
   'session-memory/change',
   'session-memory/extraction-request',
   'session-memory/extraction-result',
+  'mindspace-compaction/policy',
+  'memory/set',
+  'memory/relationship',
 ])
 const checksumOptions = { params: { [constants.ZSTD_c_checksumFlag]: 1 } }
 
@@ -56,7 +59,9 @@ function markLines(text) {
   const lines = text.replace(/\n$/, '').split('\n')
   const output = lines.map((line) => {
     const value = JSON.parse(line)
-    if (!customTypes.has(value.type) || value.ignorable === true) return line
+    const isLegacyMindspaceEvent = typeof value.type === 'string'
+      && (value.type.startsWith('memory/') || value.type.startsWith('session-memory/') || value.type.startsWith('mindspace-compaction/'))
+    if ((!customTypes.has(value.type) && !isLegacyMindspaceEvent) || value.ignorable === true) return line
     value.ignorable = true
     changed += 1
     return JSON.stringify(value)

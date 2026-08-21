@@ -10,6 +10,7 @@ import type {
   ContextCompactionPolicy,
 } from '../memory/types.ts'
 import type { SessionMemoryKey } from './locales.ts'
+import { visibleSessionIds, visibleSessionSelection } from './visible-sessions.ts'
 import css from './SessionMemorySection.module.css'
 
 const DEFAULT_COMPACTION_POLICY: ContextCompactionPolicy = {
@@ -27,8 +28,21 @@ interface SessionMemoryRemote {
   setCompactionPolicy(agentId: never, policy: ContextCompactionPolicy): Promise<RemoteResult<ContextCompactionPolicy>>
 }
 
-interface CommandsRemote {
-  execute(agentId: never, line: string): Promise<{ readonly ok: boolean; readonly error?: { readonly message: string } }>
+export interface CommandsRemote {
+  execute(agentId: never, line: string, images: readonly never[]): Promise<RemoteResult<{
+    readonly result: { readonly kind: 'success' | 'error'; readonly text?: string }
+  } | undefined>>
+}
+
+/** Execute the current DSH command contract and report the settled outcome. */
+export async function executeManualCompaction(commands: CommandsRemote, agentId: never): Promise<string> {
+  const response = await commands.execute(agentId, '/compact', [])
+  if (!response.ok) return response.error.message
+  if (response.value === undefined) return '当前会话没有可用的 /compact 命令。'
+  const result = response.value.result
+  return result.kind === 'success'
+    ? (result.text ?? '主动压缩已完成。')
+    : (result.text ?? '主动压缩未执行。')
 }
 
 export interface SessionMemorySectionInjected {
@@ -156,18 +170,39 @@ function Activity({ records, t }: { records: readonly SessionMemoryActivity[]; t
 }
 
 /** Render and mutate one selected session's memory document. */
-export function SessionMemorySection({ useSessions, remote, commands, t }: SessionMemorySectionProps) {
+export function SessionMemorySection({ useSessions, useWorkspaces, remote, commands, t }: SessionMemorySectionProps) {
   if (remote === undefined || t === undefined) return null
   const sessions = useSessions(state => state)
-  const [selected, setSelected] = useState<string | undefined>(sessions.current ?? sessions.ids[0])
+  const workspaces = useWorkspaces(state => state)
+  const [selectedId, setSelectedId] = useState<string | undefined>(sessions.current ?? sessions.ids[0])
   const [view, setView] = useState<SessionMemoryView | undefined>()
   const [draft, setDraft] = useState<EditableDocument | undefined>()
   const [status, setStatus] = useState('')
+  const visibleIds = useMemo(
+    () => visibleSessionIds(
+      sessions.ids,
+      workspaces.items.flatMap(workspace => workspace.sessionIds),
+      workspaces.archivedSessionIds,
+      workspaces.baselinesReady,
+    ),
+    [sessions.ids, workspaces.items, workspaces.archivedSessionIds, workspaces.baselinesReady],
+  )
+  const selected = visibleSessionSelection(selectedId, sessions.current, visibleIds)
   const row = selected === undefined ? undefined : sessions.byId[selected as keyof typeof sessions.byId]
   const options = useMemo(
-    () => sessions.ids.map(id => sessions.byId[id]).filter((option): option is NonNullable<typeof option> => option !== undefined),
-    [sessions],
+    () => visibleIds.map(id => sessions.byId[id]).filter((option): option is NonNullable<typeof option> => option !== undefined),
+    [sessions.byId, visibleIds],
   )
+
+  // A workspace archive may arrive while this page is open.  Clear the stale
+  // selection before any memory Remote request can read or mutate it.
+  useEffect(() => {
+    if (selectedId !== selected) {
+      setView(undefined)
+      setDraft(undefined)
+      setSelectedId(selected)
+    }
+  }, [selected, selectedId])
 
   const load = async () => {
     if (selected === undefined) return
@@ -203,6 +238,9 @@ export function SessionMemorySection({ useSessions, remote, commands, t }: Sessi
   }
 
   useEffect(() => { void load() }, [selected])
+  if (!workspaces.baselinesReady) {
+    return <div className={css.section}><h2>{t('title')}</h2><p>{t('loading')}</p></div>
+  }
   if (options.length === 0) return <div className={css.section}><h2>{t('title')}</h2><p>{t('empty')}</p></div>
 
   const save = async () => {
@@ -268,7 +306,7 @@ export function SessionMemorySection({ useSessions, remote, commands, t }: Sessi
   return <div className={css.section} data-session-memory-center>
     <header><h2>{t('title')}</h2><p>{t('intro')}</p></header>
     <label className={css.sessionSelect}><span>{t('session')}</span>
-      <select value={selected} onChange={(event) => { setSelected(event.target.value) }}>
+      <select value={selected} onChange={(event) => { setSelectedId(event.target.value) }}>
         {options.map(option => <option value={option.id} key={option.id}>{option.displayTitle}</option>)}
       </select>
     </label>
@@ -288,8 +326,7 @@ export function SessionMemorySection({ useSessions, remote, commands, t }: Sessi
           if (selected === undefined || commands === undefined) return
           setStatus('正在压缩较早的对话记忆…')
           try {
-            const result = await commands.execute(selected as never, '/compact')
-            setStatus(result.ok ? '已提交主动压缩；完成后可在对话中的压缩节点查看摘要。' : (result.error?.message ?? '主动压缩未执行'))
+            setStatus(await executeManualCompaction(commands, selected as never))
           } catch (error) { setStatus(error instanceof Error ? error.message : String(error)) }
         }}>立即压缩当前会话</button>
       </section>

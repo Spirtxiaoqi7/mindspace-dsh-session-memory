@@ -1,5 +1,79 @@
 # Changelog
 
+## 0.2.35 - 2026-08-22
+
+- Qualified the plugin against DeepSeek Harness `0.1.1-rc.2` and the stable
+  `0.1.1` line by raising the peer-dependency floor and removing the RC8 suffix.
+- Updated manual compaction for the current three-argument Commands Remote and
+  report the settled command result instead of a transport-level false success.
+- Made automatic retention model-capacity safe: an impossible absolute tail is
+  capped below half of the configured trigger budget, with a ratio fallback
+  when catalog capacity is temporarily unavailable.
+- Verified the installed Web profile with a real `/compact`: 911 history items
+  and approximately 314421 tokens were compacted successfully.
+
+## 0.2.34-rc8 - 2026-08-21
+
+- Fixed context compaction after RC8 moved `compaction-basic` and `/compact`
+  into standing Agent presets. The plugin now adapts the provider resolved from
+  each live `agent.ctx`, so saved per-session thresholds and summary limits
+  control the engine that actually owns the conversation.
+- Removed the incorrect host-plane compaction reactivation. Automatic and
+  manual compaction now share one serialized, session-scoped policy bridge
+  without creating a second engine.
+
+## 0.2.33-rc8 - 2026-08-21
+
+- Aligned Memory Center's selector with the Workspace sidebar: only top-level
+  sessions owned by a workspace are eligible, then the global archive set is
+  subtracted. Subagent and legacy orphan sessions no longer appear as if they
+  were restorable user conversations.
+
+## 0.2.32-rc8 - 2026-08-21
+
+- Fixed a cold-start archive race in Memory Center. The session selector now
+  waits for both workspace and session baselines before rendering, so the
+  initial empty archive placeholder can never expose archived conversations.
+  Archived personalization remains retained for an explicit restore.
+
+## 0.2.31-rc8 - 2026-08-21
+
+- Bumped the sidecar format marker so installations that briefly received the
+  first sidecar build re-run the safe, read-only legacy import once. No
+  conversation log is rewritten by this migration; repaired originals remain
+  alongside timestamped backups.
+
+## 0.2.30-rc8 - 2026-08-21
+
+- Extended sidecar migration to the original Memory Center records
+  (`memory/set`, `memory/remove`, `memory/relationship`, and summary-edit
+  envelopes) as well as the later governed-memory vocabulary. Existing
+  preference cards and relationship missions are retained during the move,
+  rather than merely making their conversations replayable.
+
+## 0.2.29-rc8 - 2026-08-21
+
+- Moved all editable personalization state and per-session context-compaction
+  policy out of DSH's canonical JSONL event log into an atomic, session-keyed
+  sidecar under `DSH_HOME/mindspace-session-memory/v1`. Legacy event-sourced
+  state is imported once on first access; future edits never append an
+  out-of-tree event that a stock RC8 replay could reject.
+- Disabled automatic extraction by default. It remains available as an
+  opt-in sidecar writer once explicitly enabled, while normal memory changes
+  remain model-tool or user-editor initiated.
+
+## 0.2.28-rc8 - 2026-08-21
+
+- Repaired legacy session-memory audit envelopes: historical extraction events
+  written before they were explicitly ignorable can be normalized in place by
+  the included repair script, with a full sibling backup before any rewrite.
+  This prevents a strict RC8 session replay refusal from making an otherwise
+  intact Memory Center document appear empty.
+- Memory Center now excludes archived sessions from its selector immediately.
+  Archiving is reversible: the underlying session and its personalization stay
+  retained for an explicit DSH restore, but cannot be read, edited, or injected
+  while archived.
+
 ## 0.2.27-rc8 - 2026-08-20
 
 - Fixed session-identity drift in mission-bearing conversations. The scoped
