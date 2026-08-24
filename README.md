@@ -18,7 +18,7 @@ personalization memory. It keeps continuity and user control in the same place:
 - archived conversations disappear from the Memory Center selector immediately;
   their data is retained only for a deliberate session restore, never injected or editable while archived.
 
-## 0.3.0: Explicit taxonomy and dynamic relationships
+## 0.3.2: Explicit taxonomy and dynamic relationships
 
 The user profile now contains only user-related information, split into confirmed
 and pending-confirmation fields. Preferences hold likes, dislikes, topics, activities,
@@ -26,6 +26,10 @@ tools, and habits. Assistant requirements hold only explicit must/should/do-not 
 Relationship memory describes current state and evidence; it may strengthen, weaken,
 end, or be cleared, and never replaces the Harness identity. V1/V2 data migrates to V3;
 legacy observations become pending information and legacy missions remain historical context only.
+Each `get_session_memory` call authorizes exactly one classified mutation; another write must read the
+newly persisted state again. Production acceptance on the DSH `0.1.1` Web profile verified the complete
+read/write/read/write sequence with DeepSeek-V4-Flash High, 31 automated tests, package installation,
+Host/Remote descriptor consistency, service restart, and the live Memory Center UI.
 
 ## Session-scoped context compaction
 
