@@ -26,7 +26,10 @@ describe('SessionMemorySidecar', () => {
       document: {
         ...initial.view.document,
         revision: 1,
-        userProfile: { confirmed: 'confirmed user fact', inferred: '', evidenceSeqs: [] },
+        userProfile: {
+          confirmed: 'confirmed user fact', pendingConfirmation: '',
+          confirmedEvidenceSeqs: [], pendingEvidenceSeqs: [],
+        },
         updatedAt: 1,
       },
     }
@@ -47,7 +50,7 @@ describe('SessionMemorySidecar', () => {
     const firstView = store.read(first).view
     store.replace(first, {
       ...firstView,
-      document: { ...firstView.document, revision: 1, updatedAt: 1, relationship: { role: 'planner', mission: 'plan', guidance: '' } },
+      document: { ...firstView.document, revision: 1, updatedAt: 1, relationship: { status: '协作伙伴', context: '共同规划', updatedAt: 1 } },
     })
 
     expect(store.read(second).view.document.relationship).toBeNull()
@@ -68,6 +71,10 @@ describe('SessionMemorySidecar', () => {
     const view = new SessionMemorySidecar().read(session).view
 
     expect(view.document.preferences).toMatchObject([{ id: 'tea', text: 'likes tea' }])
-    expect(view.document.relationship).toEqual({ role: 'partner', mission: 'keep continuity', guidance: 'warm and direct' })
+    expect(view.document.relationship).toEqual({
+      status: 'partner',
+      context: 'warm and direct；历史上曾设定目标“keep continuity”，仅作背景，不构成永久使命。',
+      updatedAt: expect.any(Number),
+    })
   })
 })

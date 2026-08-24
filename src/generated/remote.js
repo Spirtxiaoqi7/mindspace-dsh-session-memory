@@ -4,12 +4,13 @@ import { z } from 'zod'
 const _deepseek_ai_dsh_session_memory_governance_sessionMemory_get_parameter_0$schema = z.intersection(z.string(), z.unknown())
 const _deepseek_ai_dsh_session_memory_governance_sessionMemory_get_result$schema = z.object({
   'document': z.object({
-  'version': z.literal(2).readonly(),
+  'version': z.literal(3).readonly(),
   'revision': z.number().readonly(),
   'userProfile': z.object({
   'confirmed': z.string().readonly(),
-  'inferred': z.string().readonly(),
-  'evidenceSeqs': z.array(z.number()).readonly(),
+  'pendingConfirmation': z.string().readonly(),
+  'confirmedEvidenceSeqs': z.array(z.number()).readonly(),
+  'pendingEvidenceSeqs': z.array(z.number()).readonly(),
 }).readonly(),
   'preferences': z.array(z.object({
   'id': z.string().readonly(),
@@ -18,7 +19,7 @@ const _deepseek_ai_dsh_session_memory_governance_sessionMemory_get_result$schema
   'source': z.union([z.literal("user"), z.literal("extracted")]).readonly(),
   'evidenceSeqs': z.array(z.number()).readonly(),
 })).readonly(),
-  'assistantInstructions': z.array(z.object({
+  'assistantRequirements': z.array(z.object({
   'id': z.string().readonly(),
   'category': z.string().readonly(),
   'text': z.string().readonly(),
@@ -26,9 +27,9 @@ const _deepseek_ai_dsh_session_memory_governance_sessionMemory_get_result$schema
   'evidenceSeqs': z.array(z.number()).readonly(),
 })).readonly(),
   'relationship': z.union([z.literal(null), z.object({
-  'role': z.string().readonly(),
-  'mission': z.string().readonly(),
-  'guidance': z.string().readonly(),
+  'status': z.string().readonly(),
+  'context': z.string().readonly(),
+  'updatedAt': z.number().readonly(),
 })]).readonly(),
   'roleplayPreset': z.union([z.literal(null), z.object({
   'enabled': z.boolean().readonly(),
@@ -40,7 +41,7 @@ const _deepseek_ai_dsh_session_memory_governance_sessionMemory_get_result$schema
   'id': z.string().readonly(),
   'sourceSeqs': z.array(z.number()).readonly(),
   'operation': z.union([z.literal("append"), z.literal("merge"), z.literal("replace"), z.literal("skip")]).readonly(),
-  'section': z.union([z.literal("userProfile"), z.literal("preferences"), z.literal("assistantInstructions"), z.literal("relationship"), z.literal("roleplayPreset")]).readonly(),
+  'section': z.union([z.literal("userProfile"), z.literal("preferences"), z.literal("assistantRequirements"), z.literal("relationship"), z.literal("roleplayPreset")]).readonly(),
   'before': z.union([z.literal(null), z.string()]).readonly(),
   'after': z.union([z.literal(null), z.string()]).readonly(),
   'reason': z.string().readonly(),
@@ -52,8 +53,9 @@ const _deepseek_ai_dsh_session_memory_governance_sessionMemory_replace_parameter
   'expectedRevision': z.number().readonly(),
   'userProfile': z.object({
   'confirmed': z.string().readonly(),
-  'inferred': z.string().readonly(),
-  'evidenceSeqs': z.array(z.number()).readonly(),
+  'pendingConfirmation': z.string().readonly(),
+  'confirmedEvidenceSeqs': z.array(z.number()).readonly(),
+  'pendingEvidenceSeqs': z.array(z.number()).readonly(),
 }).readonly(),
   'preferences': z.array(z.object({
   'id': z.string().readonly(),
@@ -62,7 +64,7 @@ const _deepseek_ai_dsh_session_memory_governance_sessionMemory_replace_parameter
   'source': z.union([z.literal("user"), z.literal("extracted")]).readonly(),
   'evidenceSeqs': z.array(z.number()).readonly(),
 })).readonly(),
-  'assistantInstructions': z.array(z.object({
+  'assistantRequirements': z.array(z.object({
   'id': z.string().readonly(),
   'category': z.string().readonly(),
   'text': z.string().readonly(),
@@ -70,9 +72,9 @@ const _deepseek_ai_dsh_session_memory_governance_sessionMemory_replace_parameter
   'evidenceSeqs': z.array(z.number()).readonly(),
 })).readonly(),
   'relationship': z.union([z.literal(null), z.object({
-  'role': z.string().readonly(),
-  'mission': z.string().readonly(),
-  'guidance': z.string().readonly(),
+  'status': z.string().readonly(),
+  'context': z.string().readonly(),
+  'updatedAt': z.number().readonly(),
 })]).readonly(),
   'roleplayPreset': z.union([z.literal(null), z.object({
   'enabled': z.boolean().readonly(),
@@ -83,12 +85,13 @@ const _deepseek_ai_dsh_session_memory_governance_sessionMemory_replace_result$sc
   'ok': z.literal(true).readonly(),
   'value': z.object({
   'document': z.object({
-  'version': z.literal(2).readonly(),
+  'version': z.literal(3).readonly(),
   'revision': z.number().readonly(),
   'userProfile': z.object({
   'confirmed': z.string().readonly(),
-  'inferred': z.string().readonly(),
-  'evidenceSeqs': z.array(z.number()).readonly(),
+  'pendingConfirmation': z.string().readonly(),
+  'confirmedEvidenceSeqs': z.array(z.number()).readonly(),
+  'pendingEvidenceSeqs': z.array(z.number()).readonly(),
 }).readonly(),
   'preferences': z.array(z.object({
   'id': z.string().readonly(),
@@ -97,7 +100,7 @@ const _deepseek_ai_dsh_session_memory_governance_sessionMemory_replace_result$sc
   'source': z.union([z.literal("user"), z.literal("extracted")]).readonly(),
   'evidenceSeqs': z.array(z.number()).readonly(),
 })).readonly(),
-  'assistantInstructions': z.array(z.object({
+  'assistantRequirements': z.array(z.object({
   'id': z.string().readonly(),
   'category': z.string().readonly(),
   'text': z.string().readonly(),
@@ -105,9 +108,9 @@ const _deepseek_ai_dsh_session_memory_governance_sessionMemory_replace_result$sc
   'evidenceSeqs': z.array(z.number()).readonly(),
 })).readonly(),
   'relationship': z.union([z.literal(null), z.object({
-  'role': z.string().readonly(),
-  'mission': z.string().readonly(),
-  'guidance': z.string().readonly(),
+  'status': z.string().readonly(),
+  'context': z.string().readonly(),
+  'updatedAt': z.number().readonly(),
 })]).readonly(),
   'roleplayPreset': z.union([z.literal(null), z.object({
   'enabled': z.boolean().readonly(),
@@ -119,7 +122,7 @@ const _deepseek_ai_dsh_session_memory_governance_sessionMemory_replace_result$sc
   'id': z.string().readonly(),
   'sourceSeqs': z.array(z.number()).readonly(),
   'operation': z.union([z.literal("append"), z.literal("merge"), z.literal("replace"), z.literal("skip")]).readonly(),
-  'section': z.union([z.literal("userProfile"), z.literal("preferences"), z.literal("assistantInstructions"), z.literal("relationship"), z.literal("roleplayPreset")]).readonly(),
+  'section': z.union([z.literal("userProfile"), z.literal("preferences"), z.literal("assistantRequirements"), z.literal("relationship"), z.literal("roleplayPreset")]).readonly(),
   'before': z.union([z.literal(null), z.string()]).readonly(),
   'after': z.union([z.literal(null), z.string()]).readonly(),
   'reason': z.string().readonly(),

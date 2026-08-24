@@ -7,7 +7,7 @@ import type {} from '@deepseek-ai/dsh-typert-registry'
 import z from '@deepseek-ai/schemastery'
 import { z as zod } from 'zod'
 import type { Agent } from '@deepseek-ai/dsh-agent'
-import type { Session } from '@deepseek-ai/dsh-session'
+import type { Session, SessionEvent } from '@deepseek-ai/dsh-session'
 import type {} from '@deepseek-ai/dsh-system-prompt'
 import type {} from '@deepseek-ai/dsh-session-projection'
 import { defineTool } from '@deepseek-ai/dsh-tools'
@@ -19,7 +19,6 @@ import { installSessionCompactionPolicyBridge } from './compaction-bridge.ts'
 import { SessionMemorySidecar } from './sidecar.ts'
 import {
   DEFAULT_PROFILE_CHARACTERS,
-  DEFAULT_RELATIONSHIP_MISSION,
   extractTurn,
   MAX_MEMORY_CARDS,
   mergeAssistantIdentity,
@@ -27,7 +26,7 @@ import {
   reviewOverwrites,
   turnExtractionInput,
 } from './extraction.ts'
-import { applyMissionCapabilityPersona, renderSessionMemory, renderSessionMissionIdentity } from './render.ts'
+import { renderSessionMemory } from './render.ts'
 import { DEFAULT_AUTO_EXTRACT_BELOW_UTILIZATION, sessionMemoryUtilization } from './usage.ts'
 import type {
   ContextCompactionPolicy,
@@ -53,7 +52,6 @@ export {
 } from './fold.ts'
 export {
   DEFAULT_PROFILE_CHARACTERS,
-  DEFAULT_RELATIONSHIP_MISSION,
   EXTRACTION_SYSTEM,
   MAX_MEMORY_CARDS,
   mergeExtraction,
@@ -62,7 +60,7 @@ export {
   reviewOverwrites,
   turnExtractionInput,
 } from './extraction.ts'
-export { applyMissionCapabilityPersona, renderMissionCapabilityPersona, renderSessionMemory, renderSessionMissionIdentity } from './render.ts'
+export { renderSessionMemory } from './render.ts'
 export { DEFAULT_AUTO_EXTRACT_BELOW_UTILIZATION, sessionMemoryUtilization } from './usage.ts'
 export type { SessionMemoryUsageLimits } from './usage.ts'
 
@@ -70,7 +68,7 @@ export interface Config {
   readonly maxTextBytes?: number
   /** Hard-capped at three even when a legacy config asks for more. */
   readonly maxItemsPerSection?: number
-  /** Unicode code-point budget shared by confirmed and inferred profile text. */
+  /** Unicode code-point budget shared by confirmed and pending profile text. */
   readonly maxProfileCharacters?: number
   readonly autoExtract?: boolean
   /**
@@ -104,55 +102,55 @@ const memoryItemSchema = zod.object({
   evidenceSeqs: zod.array(zod.number()),
 })
 const userProfileSchema = zod.object({
-  confirmed: zod.string(), inferred: zod.string(), evidenceSeqs: zod.array(zod.number()),
+  confirmed: zod.string(), pendingConfirmation: zod.string(),
+  confirmedEvidenceSeqs: zod.array(zod.number()), pendingEvidenceSeqs: zod.array(zod.number()),
 })
-const relationshipSchema = zod.object({ role: zod.string(), mission: zod.string(), guidance: zod.string() })
+const relationshipSchema = zod.object({ status: zod.string(), context: zod.string(), updatedAt: zod.number() })
 const roleplayPresetSchema = zod.object({ enabled: zod.boolean(), text: zod.string() })
 const activitySchema = zod.object({
   id: zod.string(),
   sourceSeqs: zod.array(zod.number()),
   operation: zod.enum(['append', 'merge', 'replace', 'skip']),
-  section: zod.enum(['userProfile', 'preferences', 'assistantInstructions', 'relationship', 'roleplayPreset']),
+  section: zod.enum(['userProfile', 'preferences', 'assistantRequirements', 'relationship', 'roleplayPreset']),
   before: zod.string().nullable(),
   after: zod.string().nullable(),
   reason: zod.string(),
   at: zod.number(),
 })
 const documentSchema = zod.object({
-  version: zod.literal(2), revision: zod.number(), userProfile: userProfileSchema,
-  preferences: zod.array(memoryItemSchema), assistantInstructions: zod.array(memoryItemSchema),
+  version: zod.literal(3), revision: zod.number(), userProfile: userProfileSchema,
+  preferences: zod.array(memoryItemSchema), assistantRequirements: zod.array(memoryItemSchema),
   relationship: relationshipSchema.nullable(), roleplayPreset: roleplayPresetSchema.nullable(), updatedAt: zod.number(),
 })
 const viewSchema = zod.object({ document: documentSchema, memoryActivity: zod.array(activitySchema) })
 
 const MEMORY_TOOL_GUIDANCE = [
-  'Session memory is important durable user state. Decide whether to call update_session_memory when the user',
-  'explicitly states or changes stable personal information, a preference, an assistant rule, relationship, identity,',
-  'conversation purpose, or roleplay preset. The user does not need to say remember, but do not write transient',
-  'small talk, one-off tasks, or guesses. Merge related preferences and',
-  'assistant instructions into categorized cards; each section can contain at most three cards. New explicit facts',
-  'replace conflicts. The personal profile separates confirmed user facts from cautious inferred observations.',
-  'Taxonomy is strict: userProfile is only identity, demographics, location, work, skills, life state, and durable',
-  'traits; preferences is what the user likes, dislikes, chooses, or habitually uses; assistantInstructions is how',
-  'the assistant must answer or act. Never put answer-style rules in preferences, and never put likes/dislikes in',
-  'userProfile. The assistant persona, name, nickname, self-designation, relationship-specific title, and how the user',
-  'addresses the assistant belong in relationship or roleplayPreset, never userProfile or preferences. Use',
-  'remember_assistant_identity for an additive assistant nickname or identity note. One message may require several',
-  'update_session_memory calls so every section is updated.',
-  'Never store an inference as confirmed or infer sensitive data. These tools affect only the current conversation.',
+  'Session memory follows an explicit taxonomy. Before every write, call get_session_memory and classify the information',
+  'against the existing state; update or replace the matching category instead of appending sentence-shaped duplicates.',
+  'User profile contains only information about the user. confirmed is revisable, relatively stable information supported',
+  'by the user’s direct statement or later strong evidence: identity, age, gender, location, occupation, skills, and stable',
+  'life state. pendingConfirmation is also revisable and stores plausible user information that still needs confirmation;',
+  'change, remove, or promote it as later user answers provide evidence. Never derive either field from persona, roleplay,',
+  'relationship, or the assistant’s own narrative. Preferences describe the user’s likes, dislikes, choices, recurring',
+  'activities, topics, tools, work habits, and preferred kinds of communication. “I like direct people” is a preference.',
+  'assistantRequirements contains only explicit requirements addressed to the AI: must, should, do not, prohibitions,',
+  'and stable interaction rules. “You must answer directly” is a requirement. Do not turn a preference into a command.',
+  'Relationship memory is a current, revisable status inferred from relationship-relevant interaction. It may progress,',
+  'weaken, end, or be cleared; it never becomes a permanent identity, mission, or obligation and never overrides the',
+  'Harness identity. Roleplay presets and assistant identity notes require explicit user authorship and must not expand',
+  'automatically from ordinary interaction. Do not write one-off tasks or small talk. These tools affect only this session.',
 ].join(' ')
 
 const NEW_SESSION_ONBOARDING = [
-  'This is the first turn of a session with no personalization yet. Address the user request first, then ask at most',
-  'one short optional question about the role, purpose, or response style they want for this conversation. If the user',
-  'already supplied any of those, do not ask again: persist the explicit setting with update_session_memory instead.',
+  'This session has no personalization yet. Address the user request normally. Do not force onboarding questions.',
+  'Only when the user provides durable personalization, read memory first and store it under the explicit taxonomy.',
 ].join(' ')
 
 function isEmptyDocument(document: SessionMemoryDocument): boolean {
   return document.userProfile.confirmed.length === 0
-    && document.userProfile.inferred.length === 0
+    && document.userProfile.pendingConfirmation.length === 0
     && document.preferences.length === 0
-    && document.assistantInstructions.length === 0
+    && document.assistantRequirements.length === 0
     && document.relationship === null
     && document.roleplayPreset === null
 }
@@ -211,12 +209,12 @@ function resolveDocument(
   config: ResolvedConfig,
 ): SessionMemoryDocument | SessionMemoryFailure {
   for (const [field, items] of [
-    ['preferences', request.preferences], ['assistantInstructions', request.assistantInstructions],
+    ['preferences', request.preferences], ['assistantRequirements', request.assistantRequirements],
   ] as const) {
     const invalid = validateItems(items, field, config)
     if (invalid !== undefined) return invalid
   }
-  const profileCharacters = [...`${request.userProfile.confirmed}${request.userProfile.inferred}`].length
+  const profileCharacters = [...`${request.userProfile.confirmed}${request.userProfile.pendingConfirmation}`].length
   if (profileCharacters > config.maxProfileCharacters) {
     return {
       code: 'text-too-large',
@@ -225,22 +223,23 @@ function resolveDocument(
   }
   for (const [field, value] of [
     ['userProfile.confirmed', request.userProfile.confirmed],
-    ['userProfile.inferred', request.userProfile.inferred],
+    ['userProfile.pendingConfirmation', request.userProfile.pendingConfirmation],
   ] as const) {
     if (Buffer.byteLength(value, 'utf8') > config.maxTextBytes) {
       return { code: 'text-too-large', message: `${field} exceeds ${config.maxTextBytes} bytes` }
     }
   }
-  if (request.userProfile.evidenceSeqs.some(seq => !Number.isSafeInteger(seq) || seq < 0)) {
+  if ([...request.userProfile.confirmedEvidenceSeqs, ...request.userProfile.pendingEvidenceSeqs]
+    .some(seq => !Number.isSafeInteger(seq) || seq < 0)) {
     return { code: 'invalid-document', message: 'userProfile has an invalid evidence sequence' }
   }
   if (request.relationship !== null) {
-    for (const field of ['role', 'mission'] as const) {
+    for (const field of ['status'] as const) {
       const invalid = validateText(request.relationship[field], `relationship.${field}`, config.maxTextBytes)
       if (invalid !== undefined) return invalid
     }
-    if (Buffer.byteLength(request.relationship.guidance, 'utf8') > config.maxTextBytes) {
-      return { code: 'text-too-large', message: `relationship.guidance exceeds ${config.maxTextBytes} bytes` }
+    if (Buffer.byteLength(request.relationship.context, 'utf8') > config.maxTextBytes) {
+      return { code: 'text-too-large', message: `relationship.context exceeds ${config.maxTextBytes} bytes` }
     }
   }
   if (request.roleplayPreset !== null) {
@@ -252,23 +251,24 @@ function resolveDocument(
     }
   }
   return {
-    version: 2,
+    version: 3,
     revision,
     userProfile: {
       confirmed: request.userProfile.confirmed.trim().replace(/^(?:已确认|确认信息)[:：]\s*/u, ''),
-      inferred: request.userProfile.inferred.trim().replace(/^(?:AI\s*观察|观察)[:：]\s*/iu, ''),
-      evidenceSeqs: [...request.userProfile.evidenceSeqs],
+      pendingConfirmation: request.userProfile.pendingConfirmation.trim().replace(/^(?:待确认信息|待确认|AI\s*观察|观察)[:：]\s*/iu, ''),
+      confirmedEvidenceSeqs: [...request.userProfile.confirmedEvidenceSeqs],
+      pendingEvidenceSeqs: [...request.userProfile.pendingEvidenceSeqs],
     },
     preferences: request.preferences.map(item => ({
       ...item, category: item.category.trim(), text: item.text.trim(), evidenceSeqs: [...item.evidenceSeqs],
     })),
-    assistantInstructions: request.assistantInstructions.map(item => ({
+    assistantRequirements: request.assistantRequirements.map(item => ({
       ...item, category: item.category.trim(), text: item.text.trim(), evidenceSeqs: [...item.evidenceSeqs],
     })),
     relationship: request.relationship === null ? null : {
-      role: request.relationship.role.trim(),
-      mission: request.relationship.mission.trim(),
-      guidance: request.relationship.guidance.trim(),
+      status: request.relationship.status.trim(),
+      context: request.relationship.context.trim(),
+      updatedAt: request.relationship.updatedAt,
     },
     roleplayPreset: request.roleplayPreset === null || request.roleplayPreset.text.trim().length === 0
       ? null
@@ -278,8 +278,8 @@ function resolveDocument(
 }
 
 function displayProfile(document: SessionMemoryDocument): string | null {
-  const { confirmed, inferred } = document.userProfile
-  return confirmed.length === 0 && inferred.length === 0 ? null : `已确认：${confirmed}\n观察：${inferred}`
+  const { confirmed, pendingConfirmation } = document.userProfile
+  return confirmed.length === 0 && pendingConfirmation.length === 0 ? null : `已确认：${confirmed}\n待确认：${pendingConfirmation}`
 }
 
 function makeActivity(
@@ -313,7 +313,7 @@ function auditManualChange(
   const beforeProfile = displayProfile(current)
   const afterProfile = displayProfile(next)
   if (beforeProfile !== afterProfile) changes.push(makeActivity('userProfile', beforeProfile, afterProfile, time, sourceSeqs))
-  for (const section of ['preferences', 'assistantInstructions'] as const) {
+  for (const section of ['preferences', 'assistantRequirements'] as const) {
     const before = current[section]
     const after = next[section]
     const ids = new Set([...before.map(item => item.id), ...after.map(item => item.id)])
@@ -346,6 +346,7 @@ export class SessionMemoryService extends TypertRemoteService {
 
   private readonly resolved: ResolvedConfig
   private readonly installedAgents = new WeakSet<Agent>()
+  private readonly modelReadState = new Map<string, { revision: number; turn: number }>()
   private readonly store = new SessionMemorySidecar()
 
   constructor(ctx: Context, config: Config = {}) {
@@ -409,7 +410,7 @@ export class SessionMemoryService extends TypertRemoteService {
               expectedRevision: current.revision,
               userProfile: merged.document.userProfile,
               preferences: merged.document.preferences,
-            assistantInstructions: merged.document.assistantInstructions,
+              assistantRequirements: merged.document.assistantRequirements,
             relationship: merged.document.relationship,
             roleplayPreset: merged.document.roleplayPreset,
             }, merged.document.revision, merged.document.updatedAt, this.resolved)
@@ -530,28 +531,29 @@ export class SessionMemoryService extends TypertRemoteService {
       output: { schema: { type: 'json' }, render: (_args, value) => [{ type: 'text', text: JSON.stringify(value) }] },
       execute: (_args, exec): Promise<JsonValue> => {
         if (exec.agent === undefined) throw new Error('get_session_memory requires an Agent-backed session')
-        return Promise.resolve(this.get(exec.agent) as unknown as JsonValue)
+        const view = this.get(exec.agent)
+        const turn = exec.agent.session.events.findLast(event => event.type === 'turn/start')?.data.turn ?? 0
+        this.modelReadState.set(String(exec.agent.id), { revision: view.document.revision, turn })
+        return Promise.resolve(view as unknown as JsonValue)
       },
     }))
     this.ctx.tools.register(defineTool({
       name: 'update_session_memory',
-      description: 'Persist explicit personalization now. Match item cards by category; exact item ids are optional. '
-        + 'Merge related details and replace conflicts instead of creating sentence-shaped duplicate cards. '
-        + 'Use userProfile only for identity/location/work/skills/life state; preferences for likes/dislikes/choices; '
-        + 'assistantInstructions for rules governing assistant answers and behavior. Assistant names, nicknames, '
-        + 'self-designations, and relationship-specific titles belong in relationship/roleplay memory; use '
-        + 'remember_assistant_identity for an additive identity note and never put it in userProfile or preferences.',
+      description: 'Persist explicit personalization after calling get_session_memory in this turn. Classify and update '
+        + 'the existing state instead of appending duplicates. User profile is user-only confirmed or pending information; '
+        + 'preferences are likes, dislikes, topics and habits; assistantRequirements are explicit must/do-not rules; '
+        + 'relationship is a revisable current state, never a permanent identity or mission. Roleplay requires explicit user authorship.',
       parameters: {
         action: {
           type: 'string', required: true,
           enum: [
-            'set_user_profile', 'upsert_item', 'remove_item', 'set_relationship', 'clear_relationship',
+            'set_user_profile', 'upsert_item', 'remove_item', 'set_relationship_state', 'clear_relationship',
             'remember_assistant_identity', 'set_roleplay_preset', 'clear_roleplay_preset',
           ],
         },
         section: {
-          type: 'string', enum: ['preferences', 'assistantInstructions'],
-          description: 'preferences = user likes/dislikes/choices; assistantInstructions = rules for AI replies/actions.',
+          type: 'string', enum: ['preferences', 'assistantRequirements'],
+          description: 'preferences = user likes/dislikes/choices; assistantRequirements = explicit rules for AI replies/actions.',
         },
         category: { type: 'string', description: 'Stable category used to merge a card without needing its item id.' },
         text: {
@@ -563,19 +565,23 @@ export class SessionMemoryService extends TypertRemoteService {
           type: 'string',
           description: 'Complete confirmed identity/location/work/skills/life-state profile; exclude preferences and AI rules.',
         },
-        inferred: {
+        pending_confirmation: {
           type: 'string',
-          description: 'Complete cautious inferred traits; exclude likes/dislikes and rules for AI replies.',
+          description: 'Complete user-related information still awaiting confirmation; revisable and removable.',
         },
-        role: { type: 'string' },
-        mission: { type: 'string' },
-        guidance: { type: 'string' },
+        relationship_status: { type: 'string', description: 'Current revisable relationship state.' },
+        relationship_context: { type: 'string', description: 'Concise evidence/context for the current state; not a mission.' },
         enabled: { type: 'boolean' },
       },
       output: { schema: { type: 'json' }, render: (_args, value) => [{ type: 'text', text: JSON.stringify(value) }] },
       execute: async (args, exec): Promise<JsonValue> => {
         if (exec.agent === undefined) throw new Error('update_session_memory requires an Agent-backed session')
         const current = this.get(exec.agent).document
+        const turn = exec.agent.session.events.findLast(event => event.type === 'turn/start')?.data.turn ?? 0
+        const readState = this.modelReadState.get(String(exec.agent.id))
+        if (readState?.revision !== current.revision || readState.turn !== turn) {
+          throw new Error('Call get_session_memory immediately before update_session_memory so the existing state can be classified and deduplicated.')
+        }
         const latestUser = exec.agent.session.events.findLast(
           event => event.type === 'user/message' && event.data.source.kind === 'user',
         )
@@ -584,7 +590,7 @@ export class SessionMemoryService extends TypertRemoteService {
           expectedRevision: current.revision,
           userProfile: current.userProfile,
           preferences: [...current.preferences],
-          assistantInstructions: [...current.assistantInstructions],
+          assistantRequirements: [...current.assistantRequirements],
           relationship: current.relationship,
           roleplayPreset: current.roleplayPreset,
         }
@@ -592,8 +598,13 @@ export class SessionMemoryService extends TypertRemoteService {
           Object.assign(request, {
             userProfile: {
               confirmed: args.confirmed ?? current.userProfile.confirmed,
-              inferred: args.inferred ?? current.userProfile.inferred,
-              evidenceSeqs: [...new Set([...current.userProfile.evidenceSeqs, ...sourceSeqs])],
+              pendingConfirmation: args.pending_confirmation ?? current.userProfile.pendingConfirmation,
+              confirmedEvidenceSeqs: args.confirmed === undefined
+                ? [...current.userProfile.confirmedEvidenceSeqs]
+                : [...new Set([...current.userProfile.confirmedEvidenceSeqs, ...sourceSeqs])],
+              pendingEvidenceSeqs: args.pending_confirmation === undefined
+                ? [...current.userProfile.pendingEvidenceSeqs]
+                : [...new Set([...current.userProfile.pendingEvidenceSeqs, ...sourceSeqs])],
             },
           })
         } else if (args.action === 'upsert_item' || args.action === 'remove_item') {
@@ -630,13 +641,15 @@ export class SessionMemoryService extends TypertRemoteService {
             }
           }
           Object.assign(request, { [args.section]: entries })
-        } else if (args.action === 'set_relationship') {
-          if (args.role === undefined || args.role.trim().length === 0) throw new Error('role is required')
+        } else if (args.action === 'set_relationship_state') {
+          if (args.relationship_status === undefined || args.relationship_status.trim().length === 0) {
+            throw new Error('relationship_status is required')
+          }
           Object.assign(request, {
             relationship: {
-              role: args.role,
-              mission: args.mission ?? current.relationship?.mission ?? DEFAULT_RELATIONSHIP_MISSION,
-              guidance: args.guidance ?? '',
+              status: args.relationship_status,
+              context: args.relationship_context ?? '',
+              updatedAt: Date.now(),
             },
           })
         } else if (args.action === 'clear_relationship') {
@@ -649,11 +662,16 @@ export class SessionMemoryService extends TypertRemoteService {
         } else if (args.action === 'set_roleplay_preset') {
           if (args.text === undefined || args.text.trim().length === 0) throw new Error('text is required')
           Object.assign(request, { roleplayPreset: { enabled: args.enabled ?? true, text: args.text } })
-        } else {
+        } else if (args.action === 'clear_roleplay_preset') {
           Object.assign(request, { roleplayPreset: null })
+        } else {
+          throw new Error(`Unsupported memory action: ${String(args.action)}`)
         }
         const result = await this.commit(exec.agent, request, sourceSeqs)
         if (!result.ok) throw new Error(`${result.error.code}: ${result.error.message}`)
+        // One read authorizes one classified mutation only. A second write,
+        // even in the same assistant step, must read the newly persisted state.
+        this.modelReadState.delete(String(exec.agent.id))
         return result.value as unknown as JsonValue
       },
     }))
@@ -662,24 +680,6 @@ export class SessionMemoryService extends TypertRemoteService {
   private installPrompt(agent: Agent): void {
     if (this.installedAgents.has(agent)) return
     this.installedAgents.add(agent)
-    // Shadow only the agent-scoped identity slot. Do not use `complete`, which
-    // would discard Harness Web, tool, and safety sections from the request.
-    agent.ctx.systemPrompt.section({
-      name: 'harness:identity',
-      order: -100,
-      text: () => renderSessionMissionIdentity(this.get(agent))
-        ?? 'You are an AI agent powered by DeepSeek Harness.',
-    })
-    // The Web bundle's deployment persona says "You are a coding agent". That
-    // is useful as a capability description in ordinary sessions, but it is a
-    // competing identity declaration after the user has assigned this window a
-    // relationship/mission. The official assembly waterfall is scoped to this
-    // agent, so it can replace only that assembled slot and leave all Harness
-    // safety, tool, and runtime sections intact.
-    agent.ctx.on('system-prompt/assemble', async (assembly, _context, next) => {
-      const resolved = await next()
-      return applyMissionCapabilityPersona(resolved, this.get(agent))
-    })
     agent.ctx.systemPrompt.section({
       name: 'session-memory:personalization',
       order: 10,

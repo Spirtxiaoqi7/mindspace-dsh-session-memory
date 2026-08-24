@@ -3,6 +3,18 @@
 import type { ContentBlock } from '@deepseek-ai/dsh-llm/types'
 import type { SessionMemoryActivity, SessionMemoryDocument } from './types.ts'
 
+/** Shape persisted by v0.2 before pending confirmation and dynamic relationships. */
+export interface LegacySessionMemoryDocumentV2 {
+  readonly version: 2
+  readonly revision: number
+  readonly userProfile: { readonly confirmed: string; readonly inferred: string; readonly evidenceSeqs: readonly number[] }
+  readonly preferences: SessionMemoryDocument['preferences']
+  readonly assistantInstructions: SessionMemoryDocument['assistantRequirements']
+  readonly relationship: null | { readonly role: string; readonly mission: string; readonly guidance: string }
+  readonly roleplayPreset: SessionMemoryDocument['roleplayPreset']
+  readonly updatedAt: number
+}
+
 /** Shape persisted by v0.1. Kept solely so existing session logs replay. */
 export interface LegacySessionMemoryDocumentV1 {
   readonly version: 1
@@ -11,7 +23,7 @@ export interface LegacySessionMemoryDocumentV1 {
   readonly preferences: readonly LegacySessionMemoryItemV1[]
   readonly userFacts: readonly LegacySessionMemoryItemV1[]
   readonly assistantInstructions: readonly LegacySessionMemoryItemV1[]
-  readonly relationship: SessionMemoryDocument['relationship']
+  readonly relationship: null | { readonly role: string; readonly mission: string; readonly guidance: string }
   readonly roleplayPreset?: SessionMemoryDocument['roleplayPreset']
   readonly updatedAt: number
 }
@@ -33,13 +45,19 @@ export type SessionMemoryChangeEventData =
   | {
     readonly version: 2
     readonly operation: 'replace'
+    readonly document: LegacySessionMemoryDocumentV2
+    readonly changes: readonly SessionMemoryActivity[]
+  }
+  | {
+    readonly version: 3
+    readonly operation: 'replace'
     readonly document: SessionMemoryDocument
     readonly changes: readonly SessionMemoryActivity[]
   }
 
 /** Reconstructable auxiliary request used for automatic memory extraction. */
 export interface SessionMemoryExtractionRequestEventData {
-  readonly version: 1 | 2
+  readonly version: 1 | 2 | 3
   readonly turn: number
   readonly provider: string
   readonly model: string
@@ -51,7 +69,7 @@ export interface SessionMemoryExtractionRequestEventData {
 
 /** Complete model output accepted or rejected by the extraction parser. */
 export interface SessionMemoryExtractionResultEventData {
-  readonly version: 1 | 2
+  readonly version: 1 | 2 | 3
   readonly turn: number
   readonly rawOutput: ContentBlock[]
   readonly accepted: boolean

@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.3.2
+
+- Synchronized the generated Host/Remote type metadata with the V3 document schema.
+
+## 0.3.1
+
+- Tightened read-before-write so one memory read authorizes exactly one classified mutation.
+
+## 0.3.0
+
+- Replaced AI observations with revisable pending-confirmation user information.
+- Defined explicit boundaries for user profile, preferences, assistant requirements, current relationship state, and user-authored roleplay.
+- Required the model to read current session memory before every governed write.
+- Removed permanent relationship missions and all identity/persona replacement hooks.
+- Added V1/V2-to-V3 migration; legacy observations become pending confirmation and legacy missions remain only as historical context.
+
 ## 0.2.35 - 2026-08-22
 
 - Qualified the plugin against DeepSeek Harness `0.1.1-rc.2` and the stable

@@ -1,7 +1,7 @@
 /** Pure replay fold for per-session personalization memory. */
 
 import type { SessionEvent } from '@deepseek-ai/dsh-session'
-import type { LegacySessionMemoryDocumentV1 } from './domain.ts'
+import type { LegacySessionMemoryDocumentV1, LegacySessionMemoryDocumentV2 } from './domain.ts'
 import type { ContextCompactionPolicy, SessionMemoryDocument, SessionMemoryItem, SessionMemoryView } from './types.ts'
 
 export const DEFAULT_COMPACTION_POLICY: ContextCompactionPolicy = Object.freeze({
@@ -48,11 +48,11 @@ export interface SessionMemoryFoldState {
 /** Empty state before a session has personalization edits. */
 export function emptySessionMemory(): SessionMemoryDocument {
   return {
-    version: 2,
+    version: 3,
     revision: 0,
-    userProfile: { confirmed: '', inferred: '', evidenceSeqs: [] },
+    userProfile: { confirmed: '', pendingConfirmation: '', confirmedEvidenceSeqs: [], pendingEvidenceSeqs: [] },
     preferences: [],
-    assistantInstructions: [],
+    assistantRequirements: [],
     relationship: null,
     roleplayPreset: null,
     updatedAt: 0,
@@ -124,11 +124,12 @@ export function normalizeSessionMemoryDocument(document: SessionMemoryDocument):
     ...document,
     userProfile: {
       confirmed: document.userProfile.confirmed.trim(),
-      inferred: document.userProfile.inferred.trim(),
-      evidenceSeqs: [...new Set(document.userProfile.evidenceSeqs)],
+      pendingConfirmation: document.userProfile.pendingConfirmation.trim(),
+      confirmedEvidenceSeqs: [...new Set(document.userProfile.confirmedEvidenceSeqs)],
+      pendingEvidenceSeqs: [...new Set(document.userProfile.pendingEvidenceSeqs)],
     },
     preferences: normalizeMemoryCards(document.preferences, '综合偏好'),
-    assistantInstructions: normalizeMemoryCards(document.assistantInstructions, '交互要求'),
+    assistantRequirements: normalizeMemoryCards(document.assistantRequirements, '对AI的要求'),
   }
 }
 
@@ -144,19 +145,50 @@ export function migrateLegacyDocument(document: LegacySessionMemoryDocumentV1): 
   const facts = document.userFacts.map(item => item.text.trim()).filter(Boolean)
   const factEvidence = document.userFacts.flatMap(item => item.evidenceSeqs)
   return {
-    version: 2,
+    version: 3,
     revision: document.revision,
     userProfile: {
       confirmed: facts.join('；'),
-      inferred: '',
-      evidenceSeqs: [...new Set(factEvidence)],
+      pendingConfirmation: '',
+      confirmedEvidenceSeqs: [...new Set(factEvidence)],
+      pendingEvidenceSeqs: [],
     },
     preferences: migrateLegacyCards(document.preferences, '综合偏好'),
-    assistantInstructions: migrateLegacyCards(document.assistantInstructions, '交互要求'),
-    relationship: document.relationship,
+    assistantRequirements: migrateLegacyCards(document.assistantInstructions, '对AI的要求'),
+    relationship: migrateRelationship(document.relationship, document.updatedAt),
     roleplayPreset: document.roleplayPreset ?? null,
     updatedAt: document.updatedAt,
   }
+}
+
+function migrateRelationship(
+  relationship: LegacySessionMemoryDocumentV2['relationship'],
+  updatedAt: number,
+): SessionMemoryDocument['relationship'] {
+  if (relationship === null) return null
+  const history = relationship.mission.trim().length === 0
+    ? relationship.guidance.trim()
+    : [relationship.guidance.trim(), `历史上曾设定目标“${relationship.mission.trim()}”，仅作背景，不构成永久使命。`].filter(Boolean).join('；')
+  return { status: relationship.role.trim(), context: history, updatedAt }
+}
+
+/** Migrate the v0.2 profile and permanent-mission relationship into v0.3 semantics. */
+export function migrateV2Document(document: LegacySessionMemoryDocumentV2): SessionMemoryDocument {
+  return normalizeSessionMemoryDocument({
+    version: 3,
+    revision: document.revision,
+    userProfile: {
+      confirmed: document.userProfile.confirmed,
+      pendingConfirmation: document.userProfile.inferred,
+      confirmedEvidenceSeqs: [...document.userProfile.evidenceSeqs],
+      pendingEvidenceSeqs: [...document.userProfile.evidenceSeqs],
+    },
+    preferences: [...document.preferences],
+    assistantRequirements: [...document.assistantInstructions],
+    relationship: migrateRelationship(document.relationship, document.updatedAt),
+    roleplayPreset: document.roleplayPreset,
+    updatedAt: document.updatedAt,
+  })
 }
 
 /** Initial replay state. */
@@ -178,7 +210,11 @@ export function applySessionMemoryEvent(state: SessionMemoryFoldState, event: Se
   if (event.data.version === 1) {
     return { ...state, document: migrateLegacyDocument(event.data.document as LegacySessionMemoryDocumentV1) }
   }
+  if (event.data.version === 2) {
+    return { ...state, document: migrateV2Document(event.data.document as LegacySessionMemoryDocumentV2) }
+  }
   return {
+    ...state,
     document: normalizeSessionMemoryDocument(event.data.document),
     memoryActivity: [...state.memoryActivity, ...event.data.changes],
   }

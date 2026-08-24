@@ -9,18 +9,19 @@ export interface SessionMemoryItem {
   readonly evidenceSeqs: readonly number[]
 }
 
-/** A compact user portrait. Confirmed facts and AI observations stay visibly distinct. */
+/** User-related information separated by whether it has been confirmed. */
 export interface SessionUserProfile {
   readonly confirmed: string
-  readonly inferred: string
-  readonly evidenceSeqs: readonly number[]
+  readonly pendingConfirmation: string
+  readonly confirmedEvidenceSeqs: readonly number[]
+  readonly pendingEvidenceSeqs: readonly number[]
 }
 
-/** Relationship identity and purpose assigned to one conversation window. */
+/** Current relationship state. It is descriptive, revisable, and never a permanent mission. */
 export interface SessionRelationship {
-  readonly role: string
-  readonly mission: string
-  readonly guidance: string
+  readonly status: string
+  readonly context: string
+  readonly updatedAt: number
 }
 
 /** User-authored roleplay rules scoped to one conversation window. */
@@ -32,7 +33,7 @@ export interface SessionRoleplayPreset {
 export type SessionMemorySection =
   | 'userProfile'
   | 'preferences'
-  | 'assistantInstructions'
+  | 'assistantRequirements'
   | 'relationship'
   | 'roleplayPreset'
 
@@ -50,11 +51,11 @@ export interface SessionMemoryActivity {
 
 /** Complete current memory state of one session. */
 export interface SessionMemoryDocument {
-  readonly version: 2
+  readonly version: 3
   readonly revision: number
   readonly userProfile: SessionUserProfile
   readonly preferences: readonly SessionMemoryItem[]
-  readonly assistantInstructions: readonly SessionMemoryItem[]
+  readonly assistantRequirements: readonly SessionMemoryItem[]
   readonly relationship: SessionRelationship | null
   readonly roleplayPreset: SessionRoleplayPreset | null
   readonly updatedAt: number
@@ -80,7 +81,7 @@ export interface ReplaceSessionMemoryRequest {
   readonly expectedRevision: number
   readonly userProfile: SessionUserProfile
   readonly preferences: readonly SessionMemoryItem[]
-  readonly assistantInstructions: readonly SessionMemoryItem[]
+  readonly assistantRequirements: readonly SessionMemoryItem[]
   readonly relationship: SessionRelationship | null
   readonly roleplayPreset: SessionRoleplayPreset | null
 }

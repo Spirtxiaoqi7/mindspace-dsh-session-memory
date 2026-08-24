@@ -57,7 +57,7 @@ interface EditableDocument {
   expectedRevision: number
   userProfile: SessionMemoryView['document']['userProfile']
   preferences: SessionMemoryItem[]
-  assistantInstructions: SessionMemoryItem[]
+  assistantRequirements: SessionMemoryItem[]
   relationship: SessionMemoryView['document']['relationship']
   roleplayPreset: SessionMemoryView['document']['roleplayPreset']
   compactionPolicy: ContextCompactionPolicy
@@ -77,9 +77,9 @@ function mergeDraftOverLatest(
     expectedRevision: latest.revision,
     userProfile: sameMemoryValue(draft.userProfile, baseline.userProfile) ? latest.userProfile : draft.userProfile,
     preferences: sameMemoryValue(draft.preferences, baseline.preferences) ? latest.preferences : draft.preferences,
-    assistantInstructions: sameMemoryValue(draft.assistantInstructions, baseline.assistantInstructions)
-      ? latest.assistantInstructions
-      : draft.assistantInstructions,
+    assistantRequirements: sameMemoryValue(draft.assistantRequirements, baseline.assistantRequirements)
+      ? latest.assistantRequirements
+      : draft.assistantRequirements,
     relationship: sameMemoryValue(draft.relationship, baseline.relationship) ? latest.relationship : draft.relationship,
     roleplayPreset: sameMemoryValue(draft.roleplayPreset, baseline.roleplayPreset) ? latest.roleplayPreset : draft.roleplayPreset,
   }
@@ -147,7 +147,7 @@ function StructuredItemEditor({ title, hint, items, onChange, t }: ItemEditorPro
 function Activity({ records, t }: { records: readonly SessionMemoryActivity[]; t: SessionMemorySectionInjected['t'] }) {
   const labels = { append: t('activityAppend'), merge: t('activityMerge'), replace: t('activityReplace'), skip: t('activitySkip') }
   const sections: Record<SessionMemoryActivity['section'], string> = {
-    userProfile: t('profile'), preferences: t('preferences'), assistantInstructions: t('instructions'),
+    userProfile: t('profile'), preferences: t('preferences'), assistantRequirements: t('instructions'),
     relationship: t('relationship'), roleplayPreset: t('roleplayPreset'),
   }
   return <section className={css.card}>
@@ -228,7 +228,7 @@ export function SessionMemorySection({ useSessions, useWorkspaces, remote, comma
         expectedRevision: next.document.revision,
         userProfile: next.document.userProfile,
         preferences: [...next.document.preferences].slice(0, 3),
-        assistantInstructions: [...next.document.assistantInstructions].slice(0, 3),
+        assistantRequirements: [...next.document.assistantRequirements].slice(0, 3),
         relationship: next.document.relationship,
         roleplayPreset: next.document.roleplayPreset,
         compactionPolicy,
@@ -250,7 +250,7 @@ export function SessionMemorySection({ useSessions, useWorkspaces, remote, comma
       expectedRevision: draft.expectedRevision,
       userProfile: draft.userProfile,
       preferences: draft.preferences,
-      assistantInstructions: draft.assistantInstructions,
+      assistantRequirements: draft.assistantRequirements,
       relationship: draft.relationship,
       roleplayPreset: draft.roleplayPreset,
     }
@@ -277,7 +277,7 @@ export function SessionMemorySection({ useSessions, useWorkspaces, remote, comma
           }
           setView(retry.value)
           setDraft({ ...draft, expectedRevision: retry.value.document.revision, userProfile: retry.value.document.userProfile,
-            preferences: [...retry.value.document.preferences], assistantInstructions: [...retry.value.document.assistantInstructions],
+            preferences: [...retry.value.document.preferences], assistantRequirements: [...retry.value.document.assistantRequirements],
             relationship: retry.value.document.relationship, roleplayPreset: retry.value.document.roleplayPreset })
           setStatus('已将你的修改合并到最新记忆；未改动的内容已保留。')
         } else setStatus(result.error.message)
@@ -302,7 +302,7 @@ export function SessionMemorySection({ useSessions, useWorkspaces, remote, comma
     } catch (error) { setStatus(error instanceof Error ? error.message : String(error)) }
   }
 
-  const profileLength = draft === undefined ? 0 : Array.from(`${draft.userProfile.confirmed}${draft.userProfile.inferred}`).length
+  const profileLength = draft === undefined ? 0 : Array.from(`${draft.userProfile.confirmed}${draft.userProfile.pendingConfirmation}`).length
   return <div className={css.section} data-session-memory-center>
     <header><h2>{t('title')}</h2><p>{t('intro')}</p></header>
     <label className={css.sessionSelect}><span>{t('session')}</span>
@@ -312,7 +312,7 @@ export function SessionMemorySection({ useSessions, useWorkspaces, remote, comma
     </label>
     {draft !== undefined && <>
       <section className={css.card} data-context-compaction>
-        <div className={css.cardTitle}><div><h3>上下文压缩</h3><p>仅压缩该会话较早的对话记忆；用户画像、关系使命、扮演预设和系统提示不会进入摘要。</p></div>
+        <div className={css.cardTitle}><div><h3>上下文压缩</h3><p>仅压缩该会话较早的对话记忆；用户画像、当前关系状态、扮演预设和系统提示不会进入摘要。</p></div>
           <label className={css.switch}><input type="checkbox" checked={draft.compactionPolicy.enabled} onChange={(event) => setDraft({ ...draft, compactionPolicy: { ...draft.compactionPolicy, enabled: event.target.checked } })} /><span>{draft.compactionPolicy.enabled ? '已启用' : '已关闭'}</span></label>
         </div>
         <label><span>达到 {Math.round(draft.compactionPolicy.thresholdRatio * 1000) / 10}% 上下文时自动压缩</span><input type="range" min="5" max="80" step="0.1" value={draft.compactionPolicy.thresholdRatio * 100} onChange={(event) => setDraft({ ...draft, compactionPolicy: { ...draft.compactionPolicy, thresholdRatio: Number(event.target.value) / 100 } })} /></label>
@@ -340,17 +340,17 @@ export function SessionMemorySection({ useSessions, useWorkspaces, remote, comma
           value={draft.userProfile.confirmed}
           placeholder={t('profilePlaceholder')}
           onChange={(event) => {
-            const allowed = 300 - Array.from(draft.userProfile.inferred).length
+            const allowed = 300 - Array.from(draft.userProfile.pendingConfirmation).length
             setDraft({ ...draft, userProfile: { ...draft.userProfile, confirmed: Array.from(event.target.value).slice(0, allowed).join('') } })
           }}
         /></label>
-        <label><span>{t('inferredProfile')}</span><textarea
+        <label><span>{t('pendingProfile')}</span><textarea
           rows={3}
-          value={draft.userProfile.inferred}
-          placeholder={t('inferredPlaceholder')}
+          value={draft.userProfile.pendingConfirmation}
+          placeholder={t('pendingPlaceholder')}
           onChange={(event) => {
             const allowed = 300 - Array.from(draft.userProfile.confirmed).length
-            setDraft({ ...draft, userProfile: { ...draft.userProfile, inferred: Array.from(event.target.value).slice(0, allowed).join('') } })
+            setDraft({ ...draft, userProfile: { ...draft.userProfile, pendingConfirmation: Array.from(event.target.value).slice(0, allowed).join('') } })
           }}
         /></label>
       </section>
@@ -364,26 +364,17 @@ export function SessionMemorySection({ useSessions, useWorkspaces, remote, comma
       <StructuredItemEditor
         title={t('instructions')}
         hint={t('instructionsHint')}
-        items={draft.assistantInstructions}
-        onChange={(assistantInstructions) => { setDraft({ ...draft, assistantInstructions }) }}
+        items={draft.assistantRequirements}
+        onChange={(assistantRequirements) => { setDraft({ ...draft, assistantRequirements }) }}
         t={t}
       />
       <section className={css.card}><div className={css.cardTitle}><div><h3>{t('relationship')}</h3><p>{t('relationshipHint')}</p></div></div>
-        <div className={css.twoColumn}>
-          <label><span>{t('role')}</span><input value={draft.relationship?.role ?? ''} onChange={(event) => {
-            setDraft({ ...draft, relationship: { role: event.target.value, mission: draft.relationship?.mission ?? '', guidance: draft.relationship?.guidance ?? '' } })
-          }} /></label>
-          <label><span>{t('mission')}</span><input value={draft.relationship?.mission ?? ''} onChange={(event) => {
-            setDraft({ ...draft, relationship: { role: draft.relationship?.role ?? '', mission: event.target.value, guidance: draft.relationship?.guidance ?? '' } })
-          }} /></label>
-        </div>
-        <label><span>{t('guidance')}</span><textarea rows={3} value={draft.relationship?.guidance ?? ''} onChange={(event) => {
-          setDraft({ ...draft, relationship: { role: draft.relationship?.role ?? '', mission: draft.relationship?.mission ?? '', guidance: event.target.value } })
+        <label><span>{t('relationshipStatus')}</span><input value={draft.relationship?.status ?? ''} onChange={(event) => {
+          setDraft({ ...draft, relationship: { status: event.target.value, context: draft.relationship?.context ?? '', updatedAt: Date.now() } })
         }} /></label>
-        {draft.relationship !== null && draft.relationship.role.trim().length > 0 && draft.relationship.mission.trim().length > 0 && <div className={css.promptPreview}>
-          <span>{t('identityPreview')}</span>
-          <pre>{`You are ${draft.relationship.role.trim()} in this conversation.\nYour primary mission is: ${draft.relationship.mission.trim()}.${draft.relationship.guidance.trim().length === 0 ? '' : `\nSession guidance: ${draft.relationship.guidance.trim()}.`}\nThis user-assigned session mission is authoritative for your role and response stance in this conversation.`}</pre>
-        </div>}
+        <label><span>{t('relationshipContext')}</span><textarea rows={3} value={draft.relationship?.context ?? ''} onChange={(event) => {
+          setDraft({ ...draft, relationship: { status: draft.relationship?.status ?? '', context: event.target.value, updatedAt: Date.now() } })
+        }} /></label>
         <button className={css.subtleAction} type="button" onClick={() => { setDraft({ ...draft, relationship: null }) }}>{t('clearRelationship')}</button>
       </section>
       <section className={css.card}><div className={css.cardTitle}><div>

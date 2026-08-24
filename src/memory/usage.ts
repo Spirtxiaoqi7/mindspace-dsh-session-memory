@@ -22,10 +22,10 @@ export function sessionMemoryUtilization(
   limits: SessionMemoryUsageLimits,
 ): number {
   const bytes = (text: string) => Buffer.byteLength(text, 'utf8')
-  const used = bytes(document.userProfile.confirmed) + bytes(document.userProfile.inferred)
+  const used = bytes(document.userProfile.confirmed) + bytes(document.userProfile.pendingConfirmation)
     + document.preferences.reduce((total, item) => total + bytes(item.category) + bytes(item.text), 0)
-    + document.assistantInstructions.reduce((total, item) => total + bytes(item.category) + bytes(item.text), 0)
-    + (document.relationship === null ? 0 : bytes(document.relationship.role) + bytes(document.relationship.mission) + bytes(document.relationship.guidance))
+    + document.assistantRequirements.reduce((total, item) => total + bytes(item.category) + bytes(item.text), 0)
+    + (document.relationship === null ? 0 : bytes(document.relationship.status) + bytes(document.relationship.context))
     + (document.roleplayPreset === null ? 0 : bytes(document.roleplayPreset.text))
   // Profile has a Unicode code-point limit rather than a byte limit. Four
   // bytes per code point is the safe UTF-8 ceiling used for this capacity view.

@@ -18,30 +18,30 @@ export const MAX_MEMORY_CARDS = 3
 export const DEFAULT_PROFILE_CHARACTERS = 300
 
 export const EXTRACTION_SYSTEM = [
-  'Session memory is important. Consolidate durable session-local personalization from the newest USER message into',
-  'the COMPLETE current memory state. Return JSON only with keys userProfile, preferences, assistantInstructions,',
-  'relationship, roleplayPreset. userProfile is {confirmed,inferred}: confirmed contains only user-stated identity,',
-  'demographics, location, work, skills, life state, and durable habits; inferred contains cautious non-sensitive',
-  'observations and must never be presented as fact. Keep their combined text near or below 300 Chinese characters.',
-  'preferences and assistantInstructions are complete arrays of at most 3 {category,text} cards. A card is a compact',
+  'Consolidate durable session-local personalization from the newest USER message into the COMPLETE current memory state.',
+  'Return JSON only with keys userProfile, preferences, assistantRequirements, relationship, roleplayPreset, atoms.',
+  'userProfile is {confirmed,pendingConfirmation} and contains only information about the user. confirmed is relatively',
+  'stable information directly stated or strongly confirmed by the user. pendingConfirmation is plausible user information',
+  'still awaiting confirmation; revise, remove, or promote it when later evidence arrives. Neither field may contain an AI',
+  'persona, relationship narrative, likes, or assistant rules. Keep their combined text at or below 300 Chinese characters.',
+  'preferences and assistantRequirements are complete arrays of at most 3 {category,text} cards. Preferences are user',
+  'likes, dislikes, topics, activities, tools and habits. assistantRequirements contains only explicit rules addressed to',
+  'the assistant: must, should, do not, prohibitions and interaction rules. Do not turn a preference into a command.',
+  'A card is a compact',
   'structured category containing all related details. Merge new details into the best existing card; do not append a',
   'sentence-shaped card when a category can absorb it. A newer explicit correction replaces conflicting old content.',
   'A proposed destructive overwrite receives a second evidence review, so preserve an old card whenever the newest',
   'user message merely adds detail instead of explicitly correcting or withdrawing it.',
   'For “not X but Y” corrections, remove X instead of preserving “does not use X” unless the user separately states',
   'that avoiding X is itself a durable preference.',
-  'Preserve every unaffected current fact and card. relationship and roleplayPreset are the complete resulting object',
-  'or null. An assistant name, nickname, self-designation, relationship-specific title, or how the user addresses the',
-  'assistant belongs in relationship or roleplayPreset, never userProfile or preferences. Preserve existing preset',
-  'content when adding an alias. Judge only user text: assistant refusal does not cancel user input. Never invent',
-  'sensitive facts. The',
+  'Preserve every unaffected current fact and card. relationship is null or {status,context}; it describes the current',
+  'revisable relationship and may progress, weaken, end, or clear. It is never a permanent mission, identity, or obligation.',
+  'roleplayPreset is null or {enabled,text}, requires explicit user authorship, and must not grow from ordinary interaction.',
+  'Judge only user text. Never invent sensitive facts. The',
   'response is rejected atomically if incomplete or invalid. Return atoms as a compact audit list only for durable',
   'updates you actually propose: {text,disposition:"handled"|"skipped",section,reason}. Use [] when this turn has',
   'no durable memory update. Do not enumerate ordinary conversation claims, do not think aloud, and emit JSON only.',
 ].join(' ')
-
-export const DEFAULT_RELATIONSHIP_MISSION
-  = 'Interact using the relationship explicitly assigned by the user in this session.'
 
 interface ExtractionCard {
   category: string
@@ -56,9 +56,9 @@ export interface ExtractionAtom {
 }
 
 export interface ExtractionProposal {
-  userProfile: Pick<SessionUserProfile, 'confirmed' | 'inferred'>
+  userProfile: Pick<SessionUserProfile, 'confirmed' | 'pendingConfirmation'>
   preferences: ExtractionCard[]
-  assistantInstructions: ExtractionCard[]
+  assistantRequirements: ExtractionCard[]
   relationship: SessionRelationship | null
   roleplayPreset: SessionRoleplayPreset | null
   atoms: ExtractionAtom[]
@@ -123,7 +123,7 @@ function parseCards(value: unknown): ExtractionCard[] | undefined {
 }
 
 const SECTIONS = new Set<SessionMemorySection>([
-  'userProfile', 'preferences', 'assistantInstructions', 'relationship', 'roleplayPreset',
+  'userProfile', 'preferences', 'assistantRequirements', 'relationship', 'roleplayPreset',
 ])
 
 function parseAtoms(value: unknown): ExtractionAtom[] | undefined {
@@ -149,13 +149,12 @@ function parseRelationship(value: unknown): SessionRelationship | null | undefin
   if (value === null) return null
   if (typeof value !== 'object' || Array.isArray(value)) return undefined
   const row = value as Record<string, unknown>
-  const role = clean(row['role'])
-  const mission = clean(row['mission'])
-  const guidance = clean(row['guidance'])
-  if (role === undefined || role.length === 0 || mission === undefined || mission.length === 0 || guidance === undefined) {
+  const status = clean(row['status'])
+  const context = clean(row['context'])
+  if (status === undefined || status.length === 0 || context === undefined) {
     return undefined
   }
-  return { role, mission, guidance }
+  return { status, context, updatedAt: 0 }
 }
 
 function parseRoleplayPreset(value: unknown): SessionRoleplayPreset | null | undefined {
@@ -177,20 +176,20 @@ export function parseExtraction(text: string): ExtractionProposal | undefined {
     if (typeof profile !== 'object' || profile === null || Array.isArray(profile)) return undefined
     const profileRecord = profile as Record<string, unknown>
     const confirmed = clean(profileRecord['confirmed'])
-    const inferred = clean(profileRecord['inferred'])
-    if (confirmed === undefined || inferred === undefined) return undefined
-    if ([...`${confirmed}${inferred}`].length > DEFAULT_PROFILE_CHARACTERS) return undefined
+    const pendingConfirmation = clean(profileRecord['pendingConfirmation'])
+    if (confirmed === undefined || pendingConfirmation === undefined) return undefined
+    if ([...`${confirmed}${pendingConfirmation}`].length > DEFAULT_PROFILE_CHARACTERS) return undefined
     const preferences = parseCards(record['preferences'])
-    const assistantInstructions = parseCards(record['assistantInstructions'])
+    const assistantRequirements = parseCards(record['assistantRequirements'])
     const relationship = parseRelationship(record['relationship'])
     const roleplayPreset = parseRoleplayPreset(record['roleplayPreset'])
     const atoms = parseAtoms(record['atoms'])
-    if (preferences === undefined || assistantInstructions === undefined
+    if (preferences === undefined || assistantRequirements === undefined
       || relationship === undefined || roleplayPreset === undefined || atoms === undefined) return undefined
     return {
-      userProfile: { confirmed, inferred },
+      userProfile: { confirmed, pendingConfirmation },
       preferences,
-      assistantInstructions,
+      assistantRequirements,
       relationship,
       roleplayPreset,
       atoms,
@@ -378,7 +377,7 @@ function overwriteDecision(
 }
 
 function reconcileCards(
-  section: 'preferences' | 'assistantInstructions',
+  section: 'preferences' | 'assistantRequirements',
   current: readonly SessionMemoryItem[],
   proposed: readonly ExtractionCard[],
   evidenceSeqs: readonly number[],
@@ -409,7 +408,7 @@ function reconcileCards(
     if (before !== null && mutation === 'replace') {
       const decision = overwriteDecision(approvals, section, before, after)
       if (decision?.approved !== true) {
-        items.push(previous)
+        items.push(previous!)
         changes.push(skippedOverwrite(
           section,
           evidenceSeqs,
@@ -430,7 +429,7 @@ function reconcileCards(
         previous === undefined
           ? 'Added a durable category from explicit user evidence.'
           : mutation === 'replace'
-            ? `Replaced the category after explicit overwrite review: ${overwriteDecision(approvals, section, before, after)?.reason ?? 'approved.'}`
+            ? `Replaced the category after explicit overwrite review: ${overwriteDecision(approvals, section, before!, after)?.reason ?? 'approved.'}`
             : 'Consolidated the newest explicit user evidence into its existing category.',
       ))
     }
@@ -480,16 +479,16 @@ export function mergeExtraction(
 ): MergeExtractionResult {
   const approvals = options.overwriteApprovals
   const preferences = reconcileCards('preferences', document.preferences, proposal.preferences, evidenceSeqs, time, approvals)
-  const instructions = reconcileCards(
-    'assistantInstructions', document.assistantInstructions, proposal.assistantInstructions, evidenceSeqs, time, approvals,
+  const requirements = reconcileCards(
+    'assistantRequirements', document.assistantRequirements, proposal.assistantRequirements, evidenceSeqs, time, approvals,
   )
-  const changes = [...preferences.changes, ...instructions.changes]
+  const changes = [...preferences.changes, ...requirements.changes]
   const proposedProfileChanged = normalized(document.userProfile.confirmed) !== normalized(proposal.userProfile.confirmed)
-    || normalized(document.userProfile.inferred) !== normalized(proposal.userProfile.inferred)
-  const profileBefore = document.userProfile.confirmed.length === 0 && document.userProfile.inferred.length === 0
+    || normalized(document.userProfile.pendingConfirmation) !== normalized(proposal.userProfile.pendingConfirmation)
+  const profileBefore = document.userProfile.confirmed.length === 0 && document.userProfile.pendingConfirmation.length === 0
     ? null
-    : `已确认：${document.userProfile.confirmed}\n观察：${document.userProfile.inferred}`
-  const profileAfter = `已确认：${proposal.userProfile.confirmed}\n观察：${proposal.userProfile.inferred}`
+    : `已确认：${document.userProfile.confirmed}\n待确认：${document.userProfile.pendingConfirmation}`
+  const profileAfter = `已确认：${proposal.userProfile.confirmed}\n待确认：${proposal.userProfile.pendingConfirmation}`
   const profileApproval = profileBefore === null || !proposedProfileChanged
     ? undefined
     : overwriteDecision(approvals, 'userProfile', profileBefore, profileAfter)
@@ -497,7 +496,12 @@ export function mergeExtraction(
   const userProfile: SessionUserProfile = profileChanged
     ? {
       ...proposal.userProfile,
-      evidenceSeqs: [...new Set([...document.userProfile.evidenceSeqs, ...evidenceSeqs])],
+      confirmedEvidenceSeqs: normalized(document.userProfile.confirmed) === normalized(proposal.userProfile.confirmed)
+        ? [...document.userProfile.confirmedEvidenceSeqs]
+        : [...new Set([...document.userProfile.confirmedEvidenceSeqs, ...evidenceSeqs])],
+      pendingEvidenceSeqs: normalized(document.userProfile.pendingConfirmation) === normalized(proposal.userProfile.pendingConfirmation)
+        ? [...document.userProfile.pendingEvidenceSeqs]
+        : [...new Set([...document.userProfile.pendingEvidenceSeqs, ...evidenceSeqs])],
     }
     : document.userProfile
   if (proposedProfileChanged && !profileChanged) {
@@ -519,10 +523,12 @@ export function mergeExtraction(
         : `Rewrote the compact profile after explicit overwrite review: ${profileApproval?.reason ?? 'approved.'}`,
     ))
   }
-  const nextRelationship = { value: proposal.relationship }
+  const nextRelationship: { value: SessionRelationship | null } = {
+    value: proposal.relationship === null ? null : { ...proposal.relationship, updatedAt: time },
+  }
   const nextRoleplayPreset = { value: proposal.roleplayPreset }
   for (const [section, before, after] of [
-    ['relationship', document.relationship, proposal.relationship],
+    ['relationship', document.relationship, nextRelationship.value],
     ['roleplayPreset', document.roleplayPreset, proposal.roleplayPreset],
   ] as const) {
     if (JSON.stringify(before) !== JSON.stringify(after)) {
@@ -572,11 +578,11 @@ export function mergeExtraction(
   }
   return {
     document: {
-      version: 2,
+      version: 3,
       revision: changed ? document.revision + 1 : document.revision,
       userProfile,
       preferences: preferences.items,
-      assistantInstructions: instructions.items,
+      assistantRequirements: requirements.items,
       relationship: nextRelationship.value,
       roleplayPreset: nextRoleplayPreset.value,
       updatedAt: changed ? time : document.updatedAt,

@@ -7,34 +7,25 @@
 An installable DeepSeek Harness community plugin for editable, session-isolated
 personalization memory. It keeps continuity and user control in the same place:
 
-- a roughly 300-character profile separating confirmed user facts from AI observations, while DSH compaction stays internal;
+- a roughly 300-character profile separating confirmed information from information pending confirmation;
 - editable preferences and assistant instructions consolidated into at most three categorized cards each;
-- a relationship identity and a purpose for each conversation;
-- an identity-continuity guard: a session mission remains the model's identity
-  while coding and other work are capabilities, rather than competing personas;
+- a revisable current relationship state that never replaces the Harness identity or becomes a permanent mission;
 - an optional roleplay preset isolated to one session;
 - model-facing `get_session_memory` and `update_session_memory` tools;
-- conservative automatic extraction from explicit user statements;
+- read-before-write classification and deduplication for every model-owned write;
 - category-based conflict replacement with stable card ids and a visible append/merge/replace/skip audit trail;
-- a one-time, optional role/purpose/style question when a new session has no personalization.
+- no forced onboarding questionnaire for a new session.
 - archived conversations disappear from the Memory Center selector immediately;
   their data is retained only for a deliberate session restore, never injected or editable while archived.
 
-## 0.2.27-rc8: Identity continuity across work and compaction
+## 0.3.0: Explicit taxonomy and dynamic relationships
 
-When a session has an explicit relationship/mission, it now supplies the only
-identity declaration for that agent scope. The Web deployment's former
-“coding agent” persona is replaced in that scope by a role-neutral statement
-of available Harness capabilities. Sessions without a mission retain the
-ordinary Harness persona unchanged.
-
-- Coding, research, planning, administration, and roleplay are explicitly
-  framed as ways to carry out the session mission, never an identity switch.
-- The same identity section instructs compaction to retain transient task and
-  conversational state only. It must not turn the identity into a historical
-  “user request”, repeat it, or overwrite it in a checkpoint.
-- This changes prompt composition only. Harness tool availability, sandbox,
-  approvals, and safety policy are not weakened or replaced.
+The user profile now contains only user-related information, split into confirmed
+and pending-confirmation fields. Preferences hold likes, dislikes, topics, activities,
+tools, and habits. Assistant requirements hold only explicit must/should/do-not rules.
+Relationship memory describes current state and evidence; it may strengthen, weaken,
+end, or be cleared, and never replaces the Harness identity. V1/V2 data migrates to V3;
+legacy observations become pending information and legacy missions remain historical context only.
 
 ## Session-scoped context compaction
 
@@ -63,7 +54,7 @@ Version 0.2.0 turns the first editable-memory prototype into a governed,
 session-scoped personalization layer for DeepSeek Harness:
 
 - the public compaction-summary override is replaced by a 300-character user profile
-  that separates confirmed facts from clearly labelled AI observations;
+  that separates confirmed facts from information still pending confirmation;
 - preferences and assistant requirements are consolidated into at most three
   categorized cards per section instead of growing as disconnected fragments;
 - corrections replace conflicting information while preserving stable card ids;
@@ -76,7 +67,7 @@ session-scoped personalization layer for DeepSeek Harness:
 - repeated legacy fallback categories are repaired during replay instead of locking all later writes;
 - assistant names, nicknames, self-designations, and relationship-specific titles have a dedicated
   identity action and are never routed into the user's profile or preferences;
-- relationship missions and roleplay presets remain independently scoped to each
+- current relationship state and roleplay presets remain independently scoped to each
   conversation.
 
 The contribution is deliberately tree-out: one installable dual-face DSH bundle owns
@@ -85,7 +76,7 @@ descriptor, Remote, and settings UI. It does not replace DSH compaction semantic
 require an upstream source patch, making the memory-governance layer independently
 installable, auditable, and removable.
 
-### Confirmed/observed profile and categorized preferences
+### Confirmed/pending profile and categorized preferences
 
 <p align="center">
   <img src="assets/memory-center-v2-profile-preferences.png" alt="V2 profile and categorized preference cards" width="780">
@@ -155,8 +146,7 @@ the primary model alone decides whether to use the memory tools.
 System prompts, RAG, compaction summaries, and event history are not counted. The
 auxiliary budget defaults to 6000 tokens. A proposal must contain the complete next
 state plus a handled/skipped ledger for every extracted atom; invalid or partial output
-is rejected atomically. Confirmed facts and cautious observations remain separate, and
-inferred sensitive facts are rejected by policy.
+is rejected atomically. Confirmed and pending information remain separate and revisable.
 
 Enable automatic extraction in a later profile patch only if you want the cold-start
 fallback in addition to model-tool/manual writes:
@@ -179,7 +169,7 @@ The initial release targets the public DeepSeek Harness `0.1.0-rc` family and No
 22.19+ or Node 24+. Harness is currently a developer preview; breaking upstream
 changes may require a plugin update.
 
-Version `0.2.35` is qualified against DeepSeek Harness `0.1.1-rc.2` and declares
+Version `0.3.2` is qualified against DeepSeek Harness `0.1.1-rc.2` and declares
 the stable `0.1.1` line as its compatibility floor. It owns the distinct
 `mindspaceSessionMemory` Remote and does not patch or disable in-tree memory rows.
 Because DSH owns compaction inside standing Agent presets, the plugin resolves the

@@ -13,12 +13,13 @@ import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from '
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import type { Session } from '@deepseek-ai/dsh-session'
-import { emptySessionMemory, foldCompactionPolicy, foldSessionMemory, normalizeCompactionPolicy, normalizeSessionMemoryDocument } from './fold.ts'
-import type { ContextCompactionPolicy, SessionMemoryDocument, SessionMemoryItem, SessionMemoryView } from './types.ts'
+import { emptySessionMemory, foldCompactionPolicy, foldSessionMemory, migrateV2Document, normalizeCompactionPolicy, normalizeSessionMemoryDocument } from './fold.ts'
+import type { LegacySessionMemoryDocumentV2 } from './domain.ts'
+import type { ContextCompactionPolicy, SessionMemoryActivity, SessionMemoryDocument, SessionMemoryItem, SessionMemoryView } from './types.ts'
 
 export interface StoredSessionMemory {
   /** Bumped when the legacy import rules change. */
-  readonly format: 2
+  readonly format: 3
   readonly sessionId: string
   readonly view: SessionMemoryView
   readonly compactionPolicy: ContextCompactionPolicy
@@ -36,9 +37,31 @@ function sessionFilename(id: string): string {
 function isStored(value: unknown, sessionId: string): value is StoredSessionMemory {
   if (value === null || typeof value !== 'object') return false
   const item = value as Partial<StoredSessionMemory>
+  return item.format === 3 && item.sessionId === sessionId
+    && item.view !== undefined && typeof item.view === 'object'
+    && item.compactionPolicy !== undefined && typeof item.compactionPolicy === 'object'
+}
+
+interface LegacyStoredSessionMemoryV2 {
+  readonly format: 2
+  readonly sessionId: string
+  readonly view: { readonly document: LegacySessionMemoryDocumentV2; readonly memoryActivity: readonly SessionMemoryActivity[] }
+  readonly compactionPolicy: ContextCompactionPolicy
+  readonly writtenAt: number
+}
+
+function isStoredV2(value: unknown, sessionId: string): value is LegacyStoredSessionMemoryV2 {
+  if (value === null || typeof value !== 'object') return false
+  const item = value as Partial<LegacyStoredSessionMemoryV2>
   return item.format === 2 && item.sessionId === sessionId
     && item.view !== undefined && typeof item.view === 'object'
     && item.compactionPolicy !== undefined && typeof item.compactionPolicy === 'object'
+}
+
+function migrateActivity(activity: SessionMemoryActivity): SessionMemoryActivity {
+  return activity.section === ('assistantInstructions' as SessionMemoryActivity['section'])
+    ? { ...activity, section: 'assistantRequirements' }
+    : activity
 }
 
 type LegacyMemoryEvent = { readonly type: string; readonly seq: number; readonly data: Record<string, unknown> }
@@ -56,7 +79,7 @@ function legacyMemoryView(events: readonly unknown[]): { readonly view: SessionM
       const slot = data.slot
       const text = typeof data.text === 'string' ? data.text.trim() : ''
       if ((slot !== 'preferences' && slot !== 'instructions') || text.length === 0) continue
-      const section = slot === 'preferences' ? 'preferences' : 'assistantInstructions'
+      const section = slot === 'preferences' ? 'preferences' : 'assistantRequirements'
       const id = typeof data.id === 'string' && data.id.trim().length > 0 ? data.id : `legacy-${section}-${lastSeq}`
       const item: SessionMemoryItem = {
         id,
@@ -71,16 +94,22 @@ function legacyMemoryView(events: readonly unknown[]): { readonly view: SessionM
     } else if (event.type === 'memory/remove') {
       const section = data.slot === 'preferences' ? 'preferences' : data.slot === 'instructions' ? 'assistantInstructions' : undefined
       if (section === undefined || typeof data.id !== 'string') continue
-      document = { ...document, [section]: document[section].filter(value => value.id !== data.id), revision: Math.max(document.revision, 1), updatedAt: Date.now() }
+      const currentSection = section === 'assistantInstructions' ? 'assistantRequirements' : section
+      document = { ...document, [currentSection]: document[currentSection].filter(value => value.id !== data.id), revision: Math.max(document.revision, 1), updatedAt: Date.now() }
     } else if (event.type === 'memory/relationship') {
       const role = typeof data.role === 'string' ? data.role.trim() : ''
       if (role.length === 0) continue
       document = {
         ...document,
         relationship: {
-          role,
-          mission: typeof data.mission === 'string' ? data.mission : '',
-          guidance: typeof data.personaText === 'string' ? data.personaText : '',
+          status: role,
+          context: [
+            typeof data.personaText === 'string' ? data.personaText.trim() : '',
+            typeof data.mission === 'string' && data.mission.trim().length > 0
+              ? `历史上曾设定目标“${data.mission.trim()}”，仅作背景，不构成永久使命。`
+              : '',
+          ].filter(Boolean).join('；'),
+          updatedAt: Date.now(),
         },
         revision: Math.max(document.revision, 1),
         updatedAt: Date.now(),
@@ -117,13 +146,27 @@ export class SessionMemorySidecar {
           this.cache.set(session.id, stored)
           return stored
         }
+        if (isStoredV2(parsed, session.id)) {
+          const migrated: StoredSessionMemory = {
+            format: 3,
+            sessionId: session.id,
+            view: {
+              document: migrateV2Document(parsed.view.document),
+              memoryActivity: parsed.view.memoryActivity.map(migrateActivity),
+            },
+            compactionPolicy: normalizeCompactionPolicy(parsed.compactionPolicy),
+            writtenAt: Date.now(),
+          }
+          this.write(migrated)
+          return migrated
+        }
       } catch {
         // Keep the malformed sidecar untouched; a valid legacy fold below can
         // still restore the visible document and will write a fresh artifact.
       }
     }
     const imported: StoredSessionMemory = {
-      format: 2,
+      format: 3,
       sessionId: session.id,
       view: importedView(session),
       compactionPolicy: foldCompactionPolicy(session.events),

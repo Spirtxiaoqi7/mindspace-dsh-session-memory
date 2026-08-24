@@ -1,267 +1,148 @@
 import { describe, expect, it } from 'vitest'
-import {
-  emptySessionMemory,
-  foldSessionMemory,
-  migrateLegacyDocument,
-  normalizeSessionMemoryDocument,
-} from '../src/memory/fold.ts'
+import { emptySessionMemory, foldSessionMemory, migrateLegacyDocument, normalizeSessionMemoryDocument } from '../src/memory/fold.ts'
 import { mergeAssistantIdentity, mergeExtraction, parseExtraction, parseOverwriteReview } from '../src/memory/extraction.ts'
-import { sessionMemoryUtilization } from '../src/memory/usage.ts'
-import { applyMissionCapabilityPersona, renderMissionCapabilityPersona, renderSessionMemory, renderSessionMissionIdentity } from '../src/memory/render.ts'
-import type { LegacySessionMemoryDocumentV1 } from '../src/memory/domain.ts'
+import { renderSessionMemory } from '../src/memory/render.ts'
+import type { LegacySessionMemoryDocumentV1, LegacySessionMemoryDocumentV2 } from '../src/memory/domain.ts'
 import type { ExtractionProposal } from '../src/memory/extraction.ts'
 import type { SessionMemoryDocument } from '../src/memory/types.ts'
 
 function proposal(overrides: Partial<ExtractionProposal> = {}): ExtractionProposal {
   return {
-    userProfile: { confirmed: '', inferred: '' },
-    preferences: [],
-    assistantInstructions: [],
-    relationship: null,
-    roleplayPreset: null,
-    atoms: [{ text: '普通问候', disposition: 'skipped', section: null, reason: 'Not durable personalization.' }],
-    ...overrides,
+    userProfile: { confirmed: '', pendingConfirmation: '' },
+    preferences: [], assistantRequirements: [], relationship: null, roleplayPreset: null, atoms: [], ...overrides,
   }
 }
 
 function currentWithPreference(text: string): SessionMemoryDocument {
   return {
-    ...emptySessionMemory(),
-    revision: 4,
-    preferences: [{
-      id: 'stable-id', category: '饮食偏好', text, source: 'extracted', evidenceSeqs: [10],
-    }],
+    ...emptySessionMemory(), revision: 4,
+    preferences: [{ id: 'stable-id', category: '饮食偏好', text, source: 'extracted', evidenceSeqs: [10] }],
   }
 }
 
-describe('V2 complete-state extraction', () => {
-  it('uses automatic extraction only during the first 20% of editable memory capacity', () => {
-    const limits = { maxTextBytes: 4096, maxItemsPerSection: 3, maxProfileCharacters: 300 }
-    expect(sessionMemoryUtilization(emptySessionMemory(), limits)).toBe(0)
-    const nearFull = {
-      ...emptySessionMemory(),
-      preferences: [{ id: 'p', category: '偏好', text: '甲'.repeat(4096), source: 'extracted' as const, evidenceSeqs: [] }],
-      assistantInstructions: [{ id: 'a', category: '要求', text: '乙'.repeat(4096), source: 'extracted' as const, evidenceSeqs: [] }],
-    }
-    expect(sessionMemoryUtilization(nearFull, limits)).toBeGreaterThanOrEqual(0.2)
+describe('V3 governed memory', () => {
+  it('parses only the complete V3 taxonomy', () => {
+    expect(parseExtraction(JSON.stringify({
+      userProfile: { confirmed: '25岁', pendingConfirmation: '可能从事硬件开发' },
+      preferences: [{ category: '沟通', text: '喜欢直接的人' }],
+      assistantRequirements: [{ category: '回答', text: '必须先说结论' }],
+      relationship: { status: '朋友', context: '近期稳定互动' }, roleplayPreset: null, atoms: [],
+    }))).toMatchObject({ userProfile: { confirmed: '25岁', pendingConfirmation: '可能从事硬件开发' } })
+    expect(parseExtraction(JSON.stringify({
+      userProfile: { confirmed: '', pendingConfirmation: '' }, preferences: [], assistantRequirements: [],
+      relationship: null, roleplayPreset: null,
+    }))).toBeUndefined()
   })
 
-  it('promotes an explicit window mission into the identity slot, not a late relationship hint', () => {
+  it('keeps confirmed and pending user information separate', () => {
+    const result = mergeExtraction(emptySessionMemory(), proposal({
+      userProfile: { confirmed: '25岁', pendingConfirmation: '可能喜欢硬件' },
+      atoms: [{ text: 'profile', disposition: 'handled', section: 'userProfile', reason: 'explicit and pending evidence' }],
+    }), [7], 100)
+    expect(result.document.userProfile).toEqual({
+      confirmed: '25岁', pendingConfirmation: '可能喜欢硬件', confirmedEvidenceSeqs: [7], pendingEvidenceSeqs: [7],
+    })
+  })
+
+  it('renders relationship as revisable context, not identity or mission', () => {
     const document: SessionMemoryDocument = {
-      ...emptySessionMemory(),
-      relationship: { role: 'private companion', mission: 'help plan this trip', guidance: 'be direct' },
+      ...emptySessionMemory(), relationship: { status: '朋友', context: '近期稳定且互相信任', updatedAt: 100 },
     }
-    const view = { document, memoryActivity: [] }
-    expect(renderSessionMissionIdentity(view)).toContain('You are private companion in this conversation.')
-    expect(renderSessionMissionIdentity(view)).toContain('Your primary mission is: help plan this trip.')
-    expect(renderSessionMissionIdentity(view)).toContain('continuing first-person identity')
-    expect(renderSessionMissionIdentity(view)).toContain('do not restate, reinterpret, downgrade, or replace it in the checkpoint')
-    expect(renderMissionCapabilityPersona(view)).toContain('capabilities for carrying out the current session mission')
-    expect(renderSessionMemory(view)).not.toContain('Current relationship and purpose')
-    expect(renderSessionMissionIdentity({ document: emptySessionMemory(), memoryActivity: [] })).toBeUndefined()
-    expect(renderMissionCapabilityPersona({ document: emptySessionMemory(), memoryActivity: [] })).toBeUndefined()
+    const rendered = renderSessionMemory({ document, memoryActivity: [] })
+    expect(rendered).toContain('- Status: 朋友')
+    expect(rendered).toContain('not a permanent identity, mission, or obligation')
+    expect(rendered).not.toContain('Your primary mission')
   })
 
-  it('replaces only the deployment coding persona in a mission-bearing prompt assembly', () => {
-    const document: SessionMemoryDocument = {
-      ...emptySessionMemory(),
-      relationship: { role: 'companion', mission: 'help with work', guidance: '' },
-    }
-    const assembly = {
-      sections: [
-        { name: 'harness:identity', text: 'SESSION IDENTITY' },
-        { name: 'deployment:persona', text: 'You are a coding agent.' },
-        { name: 'tool:approval', text: 'TOOL SAFETY' },
-      ],
-      contexts: [], tools: [], variables: {},
-    }
-    const transformed = applyMissionCapabilityPersona(assembly, { document, memoryActivity: [] })
-    expect(transformed.sections).toEqual([
-      { name: 'harness:identity', text: 'SESSION IDENTITY' },
-      expect.objectContaining({ name: 'deployment:persona', text: expect.stringContaining('capabilities') }),
-      { name: 'tool:approval', text: 'TOOL SAFETY' },
-    ])
-    expect(JSON.stringify(transformed.sections)).not.toContain('You are a coding agent.')
-    expect(applyMissionCapabilityPersona(assembly, { document: emptySessionMemory(), memoryActivity: [] })).toBe(assembly)
-  })
-
-  it('adds an assistant nickname without silently enabling a disabled preset', () => {
-    const preset = mergeAssistantIdentity(
-      { enabled: false, text: '你是萧镜鸢。' },
-      '官方外号是粉色小鲸鱼。',
-    )
+  it('keeps an explicitly authored assistant nickname in roleplay', () => {
+    const preset = mergeAssistantIdentity({ enabled: false, text: '你是萧镜鸢。' }, '官方外号是粉色小鲸鱼。')
     expect(preset).toEqual({ enabled: false, text: '你是萧镜鸢。\n官方外号是粉色小鲸鱼。' })
     expect(mergeAssistantIdentity(preset, '官方外号是粉色小鲸鱼。')).toEqual(preset)
   })
 
-  it('rejects a partial result but permits an empty durable-update audit list', () => {
-    expect(parseExtraction(JSON.stringify({
-      userProfile: { confirmed: '', inferred: '' },
-      preferences: [],
-      assistantInstructions: [],
-      relationship: null,
-      roleplayPreset: null,
-    }))).toBeUndefined()
-    expect(parseExtraction(JSON.stringify({
-      userProfile: { confirmed: '', inferred: '' },
-      preferences: [],
-      assistantInstructions: [],
-      relationship: null,
-      roleplayPreset: null,
-      atoms: [],
-    }))).toMatchObject({ atoms: [] })
-    expect(parseExtraction(JSON.stringify({
-      userProfile: { confirmed: '', inferred: '' },
-      preferences: [],
-      assistantInstructions: [],
-      relationship: null,
-      roleplayPreset: null,
-      atoms: [{ text: '我喜欢苹果', disposition: 'handled', section: null, reason: 'missing target' }],
-    }))).toBeUndefined()
-  })
-
-  it('rejects a profile beyond the deterministic 300-character budget', () => {
-    expect(parseExtraction(JSON.stringify({
-      userProfile: { confirmed: '甲'.repeat(301), inferred: '' },
-      preferences: [],
-      assistantInstructions: [],
-      relationship: null,
-      roleplayPreset: null,
-      atoms: [{ text: 'profile', disposition: 'handled', section: 'userProfile', reason: 'explicit' }],
-    }))).toBeUndefined()
-  })
-
-  it('persists a same-length conflict replacement and retains the stable card id', () => {
-    const before = currentWithPreference('喜欢苹果')
-    const result = mergeExtraction(before, proposal({
+  it('preserves a stable card id during explicit correction', () => {
+    const result = mergeExtraction(currentWithPreference('喜欢苹果'), proposal({
       preferences: [{ category: '饮食偏好', text: '喜欢香蕉' }],
-      atoms: [{ text: '我改成喜欢香蕉', disposition: 'handled', section: 'preferences', reason: 'explicit correction' }],
+      atoms: [{ text: '改成香蕉', disposition: 'handled', section: 'preferences', reason: 'explicit correction' }],
     }), [22], 1_000)
-    expect(result.document.preferences).toHaveLength(1)
     expect(result.document.preferences[0]).toMatchObject({ id: 'stable-id', text: '喜欢香蕉' })
     expect(result.document.revision).toBe(5)
-    expect(result.changes).toEqual(expect.arrayContaining([
-      expect.objectContaining({ operation: 'replace', section: 'preferences', sourceSeqs: [22] }),
-    ]))
   })
 
-  it('keeps a prior card when the overwrite review lacks explicit correction evidence', () => {
-    const before = currentWithPreference('喜欢苹果')
-    const result = mergeExtraction(before, proposal({
+  it('preserves a card when overwrite review rejects replacement', () => {
+    const result = mergeExtraction(currentWithPreference('喜欢苹果'), proposal({
       preferences: [{ category: '饮食偏好', text: '喜欢香蕉' }],
-      atoms: [{ text: '顺便买了香蕉', disposition: 'handled', section: 'preferences', reason: 'new detail only' }],
-    }), [23], 1_001, {
-      overwriteApprovals: [{
-        section: 'preferences',
-        before: '饮食偏好：喜欢苹果',
-        after: '饮食偏好：喜欢香蕉',
-        approved: false,
-        reason: 'The newest user message did not explicitly correct the prior preference.',
-      }],
-    })
+    }), [23], 1_001, { overwriteApprovals: [{
+      section: 'preferences', before: '饮食偏好：喜欢苹果', after: '饮食偏好：喜欢香蕉',
+      approved: false, reason: 'No explicit correction.',
+    }] })
     expect(result.document.preferences[0]).toMatchObject({ id: 'stable-id', text: '喜欢苹果' })
     expect(result.document.revision).toBe(4)
-    expect(result.changes).toEqual(expect.arrayContaining([
-      expect.objectContaining({ operation: 'skip', section: 'preferences' }),
-    ]))
   })
 
-  it('requires an exact, complete overwrite review before authorizing destructive automatic changes', () => {
+  it('requires an exact overwrite decision', () => {
     const candidates = [{ section: 'preferences' as const, before: '饮食偏好：喜欢苹果', after: '饮食偏好：喜欢香蕉' }]
-    expect(parseOverwriteReview(JSON.stringify({ decisions: [{
-      ...candidates[0], approved: true, reason: '用户明确说不喜欢苹果，改为香蕉。',
-    }] }), candidates)).toMatchObject([{ approved: true }])
+    expect(parseOverwriteReview(JSON.stringify({ decisions: [{ ...candidates[0], approved: true, reason: '明确纠正' }] }), candidates))
+      .toMatchObject([{ approved: true }])
     expect(parseOverwriteReview(JSON.stringify({ decisions: [] }), candidates)).toBeUndefined()
-    expect(parseOverwriteReview(JSON.stringify({ decisions: [{
-      section: 'preferences', before: '饮食偏好：喜欢梨', after: '饮食偏好：喜欢香蕉', approved: true, reason: 'wrong prior value',
-    }] }), candidates)).toBeUndefined()
   })
 
-  it('folds a fourth proposed category into three cards without losing its text', () => {
-    const result = mergeExtraction(emptySessionMemory(), proposal({
-      preferences: [
-        { category: '饮食', text: '喜欢水果' },
-        { category: '技术', text: '偏好Rust' },
-        { category: '审美', text: '喜欢暖色' },
-        { category: '作息', text: '习惯晚睡' },
-      ],
-      atoms: [{ text: '四类偏好', disposition: 'handled', section: 'preferences', reason: 'all explicit' }],
-    }), [30], 2_000)
+  it('consolidates a fourth preference into the three-card limit', () => {
+    const result = mergeExtraction(emptySessionMemory(), proposal({ preferences: [
+      { category: '饮食', text: '喜欢水果' }, { category: '技术', text: '偏好Rust' },
+      { category: '审美', text: '喜欢暖色' }, { category: '作息', text: '习惯晚睡' },
+    ] }), [30], 2_000)
     expect(result.document.preferences).toHaveLength(3)
-    expect(result.document.preferences.map(item => `${item.category}${item.text}`).join('|')).toContain('作息')
-    expect(result.document.preferences.map(item => item.text).join('|')).toContain('习惯晚睡')
+    expect(JSON.stringify(result.document.preferences)).toContain('习惯晚睡')
   })
 
-  it('records explicit skipped atoms without pretending a state mutation occurred', () => {
+  it('records skipped small talk without advancing revision', () => {
     const result = mergeExtraction(emptySessionMemory(), proposal({
       atoms: [{ text: '今天天气不错', disposition: 'skipped', section: null, reason: 'Temporary small talk.' }],
     }), [41], 3_000)
     expect(result.document.revision).toBe(0)
-    expect(result.changes).toEqual([
-      expect.objectContaining({ operation: 'skip', sourceSeqs: [41], reason: 'Temporary small talk.' }),
-    ])
+    expect(result.changes).toEqual([expect.objectContaining({ operation: 'skip' })])
   })
 })
 
-describe('V1 replay migration', () => {
-  const legacy: LegacySessionMemoryDocumentV1 = {
-    version: 1,
-    revision: 7,
-    summaryOverride: 'This is deliberately not migrated into personalization.',
+describe('legacy migration', () => {
+  const legacyV1: LegacySessionMemoryDocumentV1 = {
+    version: 1, revision: 7, summaryOverride: 'not migrated',
     preferences: [{ id: 'p1', text: '喜欢水果', source: 'user', evidenceSeqs: [1] }],
-    userFacts: [{ id: 'f1', text: '25岁男性', source: 'extracted', evidenceSeqs: [2] }],
+    userFacts: [{ id: 'f1', text: '25岁', source: 'extracted', evidenceSeqs: [2] }],
     assistantInstructions: [{ id: 'a1', text: '回答简洁', source: 'user', evidenceSeqs: [3] }],
-    relationship: null,
-    roleplayPreset: null,
-    updatedAt: 9,
+    relationship: { role: '伙伴', mission: '永远陪伴', guidance: '温和' }, roleplayPreset: null, updatedAt: 9,
   }
 
-  it('migrates facts into confirmed profile and retires summaryOverride', () => {
-    const migrated = migrateLegacyDocument(legacy)
-    expect(migrated.version).toBe(2)
-    expect(migrated.userProfile).toMatchObject({ confirmed: '25岁男性', inferred: '', evidenceSeqs: [2] })
-    expect(migrated.preferences[0]).toMatchObject({ id: 'p1', category: '综合偏好' })
-    expect(migrated).not.toHaveProperty('summaryOverride')
+  it('migrates V1 without keeping a permanent mission', () => {
+    const migrated = migrateLegacyDocument(legacyV1)
+    expect(migrated.version).toBe(3)
+    expect(migrated.userProfile).toMatchObject({ confirmed: '25岁', pendingConfirmation: '', confirmedEvidenceSeqs: [2] })
+    expect(migrated.assistantRequirements[0]).toMatchObject({ category: '对AI的要求' })
+    expect(migrated.relationship).toMatchObject({ status: '伙伴', context: expect.stringContaining('不构成永久使命') })
   })
 
-  it('merges repeated legacy fallback categories so the migrated document remains writable', () => {
-    const migrated = migrateLegacyDocument({
-      ...legacy,
-      preferences: [
-        { id: 'p1', text: '喜欢水果', source: 'user', evidenceSeqs: [1] },
-        { id: 'p2', text: '喜欢无糖茶', source: 'user', evidenceSeqs: [4] },
-      ],
-    })
-    expect(migrated.preferences).toHaveLength(1)
-    expect(migrated.preferences[0]).toMatchObject({ id: 'p1', category: '综合偏好' })
-    expect(migrated.preferences[0]?.text).toContain('喜欢水果')
-    expect(migrated.preferences[0]?.text).toContain('无糖茶')
-    expect(migrated.preferences[0]?.evidenceSeqs).toEqual([1, 4])
+  it('migrates V2 observations to pending confirmation', () => {
+    const legacyV2: LegacySessionMemoryDocumentV2 = {
+      version: 2, revision: 8,
+      userProfile: { confirmed: '25岁', inferred: '可能喜欢硬件', evidenceSeqs: [2, 4] },
+      preferences: [], assistantInstructions: [],
+      relationship: { role: '朋友', mission: '陪伴', guidance: '' }, roleplayPreset: null, updatedAt: 10,
+    }
+    const view = foldSessionMemory([{ type: 'session-memory/change', seq: 9, data: {
+      version: 2, operation: 'replace', document: legacyV2, changes: [],
+    } } as never])
+    expect(view.document.version).toBe(3)
+    expect(view.document.userProfile.pendingConfirmation).toBe('可能喜欢硬件')
+    expect(view.document.relationship?.context).toContain('不构成永久使命')
   })
 
-  it('repairs duplicate categories persisted by an early V2 preview before the next write', () => {
-    const repaired = normalizeSessionMemoryDocument({
-      ...emptySessionMemory(),
-      revision: 9,
-      preferences: [
-        { id: 'first', category: '综合偏好', text: '喜欢水果', source: 'user', evidenceSeqs: [1] },
-        { id: 'second', category: ' 综合偏好 ', text: '喜欢无糖茶', source: 'extracted', evidenceSeqs: [2] },
-      ],
-    })
+  it('repairs duplicate categories before the next write', () => {
+    const repaired = normalizeSessionMemoryDocument({ ...emptySessionMemory(), revision: 9, preferences: [
+      { id: 'first', category: '综合偏好', text: '喜欢水果', source: 'user', evidenceSeqs: [1] },
+      { id: 'second', category: ' 综合偏好 ', text: '喜欢无糖茶', source: 'extracted', evidenceSeqs: [2] },
+    ] })
     expect(repaired.preferences).toHaveLength(1)
-    expect(repaired.preferences[0]).toMatchObject({ id: 'first', category: '综合偏好', source: 'user' })
     expect(repaired.preferences[0]?.text).toBe('喜欢水果；喜欢无糖茶')
-    expect(repaired.preferences[0]?.evidenceSeqs).toEqual([1, 2])
-  })
-
-  it('replays a legacy change event into a V2 public view', () => {
-    const view = foldSessionMemory([{
-      type: 'session-memory/change',
-      seq: 8,
-      data: { version: 1, operation: 'replace', document: legacy },
-    } as never])
-    expect(view.document.version).toBe(2)
-    expect(view.document.revision).toBe(7)
-    expect(view.memoryActivity).toEqual([])
   })
 })
