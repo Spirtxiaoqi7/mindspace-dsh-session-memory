@@ -193,7 +193,6 @@ pnpm pack --pack-destination dist
 
 The generated Typert descriptors are committed under `src/generated/`. The build
 rescopes their package identity and bundles the browser Remote with the UI.
-特别谢鸣：顾女士
 Chinese documentation: [README.zh-CN.md](README.zh-CN.md)
 
 ## License
