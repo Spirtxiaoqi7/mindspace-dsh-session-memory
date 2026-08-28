@@ -8,6 +8,14 @@ An installable DeepSeek Harness community plugin for editable, session-isolated 
 
 Version 0.4.1 represents up to five ordered people. Person one is the current speaker, but is not treated as the AI's entire world. Every person has a stable id, name, information, one preference text, and a revisable relationship/background with the active AI. Explicit AI requirements and ordinary memories remain separate three-card sections.
 
+## Why multi-person memory
+
+A long-running agent should not treat the current `user` as its entire world. Conventional single-user memory keeps accumulating information about one speaker while the people, relationships, and judgments available to the model remain structurally narrow. Injecting an unrelated task may force renewed reasoning, but it also disrupts ongoing roleplay, work, or ordinary conversation.
+
+Version 0.4.1 changes the agent's *people context* instead of forcibly changing its current task. Distinct real people are stored separately, so a new relationship can make the model reconsider who is involved, how the situation should be understood, and whether an action is appropriate, while leaving the ongoing task largely intact. Person one is merely the current speaker; up to five people can each have their own information, preference, and relationship/background with the active AI.
+
+This is not conventional multi-character roleplay, nor does it require autonomous model-to-model chatter. Unsupervised AI-to-AI conversation can collapse into a self-narrating loop. The plugin keeps people in control while giving the agent a continuous world containing more than one real person. Multi-model interaction may be added later, but the design does not depend on it.
+
 The model reads and writes through `get_session_memory` and `update_session_memory`. One read authorizes one classified mutation. Model-facing fields are rendered in Chinese as `人物一`, `个体名称`, `个体信息`, `人物偏好`, and `与当前 AI 的关系及背景`.
 
 V1, V2, and V3 data migrates losslessly into the V4 sidecar format. The old user profile and preferences become person one, the old relationship becomes that person's relationship/background, and the old roleplay preset becomes an ordinary memory. Grandfathered text over the new 300-character edit limit is preserved until it is deliberately edited.
