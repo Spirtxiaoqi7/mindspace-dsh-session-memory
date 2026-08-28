@@ -1,109 +1,40 @@
-# DeepSeek Harness 的 Mindspace 会话记忆插件
+# DeepSeek Harness 的 Mindspace 多人物会话记忆
 
-<p align="center">
-  <img src="assets/repository-logo.png" alt="DeepSeek 鲸鱼社区图" width="280">
-</p>
+这是一个可安装的 DeepSeek Harness 社区插件。0.4.1 将单一用户画像升级为按会话隔离、可编辑的多人物记忆，让 AI 记住的不只是当前发言者，也包括真实出现在这段关系与生活中的其他人物。
 
-这是一个可安装的 DeepSeek Harness 社区插件，为每个会话提供隔离、可编辑、
-可治理的个性化记忆：
+## 0.4.1 的记忆结构
 
-- 以约 300 字的画像区分“已确认信息”与“正在确认的信息”，两者均可修订；
-- 用户偏好、对 AI 的要求各归纳为最多三张分类卡并可直接修改；
-- 每个窗口保存可发展、减弱、结束或清空的当前关系状态，不再固化永久使命；
-- 可选的扮演预设只注入当前会话；
-- AI 可调用 `get_session_memory` 与 `update_session_memory` 主动读写；
-- 写入前必须先读取现有 Memory，并按用户信息、偏好、对 AI 的要求、关系状态、扮演预设分类更新；
-- 新信息按分类合并，明确纠正可稳定覆盖冲突信息且保留卡片 id；
-- 最近整理记录显示来源消息、追加/合并/覆盖/跳过、前后值与原因；
-- 新会话不强制个性化问卷；只在自然对话中出现耐久信息时写入。
+- **人物信息**：最多 5 人。人物一对应当前发言者，但不是 AI 世界里唯一的人。每人拥有稳定 id、个体名称和最多 300 字的个体信息；同名人物不会被自动合并。
+- **人物偏好**：与人物列表严格对齐，每人一段、最多 300 字。
+- **对 AI 的要求**：最多 3 个归纳组，只记录明确的必须、应该、不要、禁止和稳定互动规则。
+- **人物之间关系**：分别描述每个人物与当前 AI 的关系及背景，允许随互动发展、减弱或结束。
+- **记忆**：最多 3 个普通记忆组，可记录值得延续的事件与背景，不再限定为扮演预设，也没有启用开关。
 
-## 0.3.2：明确分类与动态关系
+模型可通过 `get_session_memory` 与 `update_session_memory` 主动读写。一次读取只授权一次分类更新；下一次写入前必须重新读取，从而避免用旧状态覆盖人工或其他轮次的修改。提示词使用中文字段 `人物一`、`个体名称`、`个体信息`、`人物偏好`、`与当前 AI 的关系及背景`。
 
-- 用户个人信息只保存与用户本人有关的内容，拆为“已确认信息”和“正在确认的信息”；
-- 用户偏好保存喜欢、讨厌、主题、活动、工具和习惯，不把“喜欢直接的人”误写为命令；
-- 对 AI 的要求只保存明确的必须、应该、不要、禁止与稳定互动规则；
-- 每次模型写入前必须先调用 `get_session_memory`；一次读取只允许一次分类更新，下一次写入必须重新读取；
-- 关系只描述当前状态和依据，不再覆盖 Harness 身份，也不再成为永久使命或义务；
-- 扮演预设仍用于用户明确写下的 VIP 定制，普通交流不会自动扩写；
-- V1/V2 数据首次读取时迁移到 V3；旧 AI 观察进入“正在确认”，旧使命只保留为历史背景说明。
+## 数据迁移
 
-生产验收使用 DeepSeek Harness `0.1.1` Web profile 与 DeepSeek-V4-Flash High：模型在同一轮
-保存两类信息时实际执行了“读取 → 写入用户偏好 → 重新读取 → 写入对 AI 的要求”。记忆中心
-显示正确分类和两条变更记录；31 项自动化测试、构建、打包、安装后源码/描述符核对、DSH
-重启及 `http://127.0.0.1:3080/` 实际页面加载均已通过。
+侧车格式升级为 4。第一次读取旧数据时会自动迁移：
 
-## 功能：会话级上下文压缩
+- V1/V2/V3 的用户画像、待确认信息、偏好与关系合并到人物一；
+- 旧扮演预设进入普通“记忆”；
+- 旧对 AI 要求继续保留；
+- 旧数据即使超过新的 300 字编辑上限也不会被迁移过程截断；只有新建或实际编辑后的字段执行新上限。
 
-“上下文压缩”位于记忆中心顶部，并且严格按会话隔离。用户可以直接启用或关闭、
-调节触发阈值、保留最近上下文和摘要上限，也可以在任何时候手动执行一次压缩。
-策略保存在按会话隔离的侧车文件中，不会影响其他窗口。
+数据仍保存在 `DSH_HOME/mindspace-session-memory/v1` 下按会话隔离的原子侧车文件中，不改写 DSH 原始会话 JSONL。自动抽取默认关闭；默认由模型工具或记忆中心人工编辑。
 
-- 压缩以对话 surface 为对象；为复用缓存，摘要调用仍会收到当前系统上下文。会话身份会
-  明确要求它不得复制、重新解释或覆盖身份、画像、关系和扮演状态到 checkpoint；
-- 新摘要以先前摘要为输入，避免每次压缩丢失已保留的长期上下文；
-- 摘要提示要求去除寒暄、重复内容和工具日志，优先保留事实、决定、约束、未完成事项与可复用结论；
-- DSH 的默认压缩机制仍是执行主体；本插件只提供会话级策略和可见的控制入口。
+## 会话级上下文压缩
 
-本项目是社区插件，不属于 DeepSeek 官方项目。仓库图片由项目所有者提供，仅用于
-标识本仓库。
-
-## 0.1.1 兼容线
-
-当前固定版本 `0.3.2` 已针对 DeepSeek Harness `0.1.1-rc.2` 验证，并将稳定版
-`0.1.1` 作为兼容线。它独占 `mindspaceSessionMemory` Remote，不引用或禁用旧内置记忆
-条目。DSH 将压缩器放在 Agent preset 内；插件会从每个实时 `agent.ctx` 解析实际压缩
-服务并临时、串行地应用该会话策略，不会重新启用 Web 已禁用的 Host 压缩器，因此无需
-修改 Harness 的 `compaction-basic`、bundle、Remote 或 TypeScript 源码。不要与旧的
-内嵌 Mindspace Memory 同时安装；迁移时每个记忆 schema 与 Remote 只能保留一个所有者。
-
-## 记忆治理基础（始于 0.2.0）
-
-0.2.0 将首版“可编辑记忆”原型升级为 DeepSeek Harness 的会话级记忆治理层：
-
-- 取消面向用户的压缩摘要覆盖，改为约 300 字的用户画像；0.3.0 起明确分开“已确认”
-  与“正在确认”；
-- 用户偏好和对 AI 的要求按主题归纳，每部分最多三张卡，避免长期记忆碎片化增长；
-- 用户纠正信息时直接覆盖冲突内容，同时保持卡片 id 稳定；
-- 自动抽取必须提交完整下一状态和逐信息 handled/skipped 清单，输出不完整时整批拒绝，
-  不留下半份记忆；
-- 最近整理记录展示新增、合并、覆盖、跳过以及来源消息、前后值、原因和时间；
-- V1 会话事件仍可回放，并自动迁移到 V2 文档；
-- 历史档案中的同名兜底分类会在回放时自动合并，不再锁死后续所有写入；
-- AI 的名字、外号、自称和关系称谓使用专用身份动作，禁止写入用户画像或用户偏好；
-- 当前关系状态和扮演预设继续按单个会话隔离。
-
-本贡献保持 tree-out 组合方式：一个可安装的双面 DSH bundle 同时提供宿主侧服务、
-事件投影、提示与工具接入、抽取钩子、Typert 描述符、Remote 和设置界面。它不替换
-DSH 原有压缩语义，也不要求修改上游源码，因此这套记忆治理层可以独立安装、审计
-和卸载。
-
-### 已确认/正在确认画像与分类偏好
-
-<p align="center">
-  <img src="assets/memory-center-v2-profile-preferences.png" alt="V2 用户画像与分类偏好" width="780">
-</p>
-
-### 会话角色预设与可见记忆审计
-
-<p align="center">
-  <img src="assets/memory-center-v2-role-audit.png" alt="V2 扮演预设与记忆整理审计" width="780">
-</p>
-
-V2 验收已通过 10 项自动化测试、构建与打包、真实模型写入/归并/覆盖、跨会话隔离，
-以及默认 Web profile 重启后的持久化验证。
+记忆中心顶部继续提供按会话隔离的自动压缩阈值、末尾原文保留量、摘要上限和“立即压缩”按钮。压缩策略独立保存，不会把人物、要求和普通记忆并入摘要，也不会影响其他会话。
 
 ## 安装
-
-本 README 描述 `main` 的当前代码。它不将未发布的版本号写成不存在的 Release
-tarball：先拉取源码并手动生成预构建包，再在 **官方 Harness checkout 根目录** 安装。
 
 ```powershell
 git clone https://github.com/Spirtxiaoqi7/mindspace-dsh-session-memory.git
 Set-Location .\mindspace-dsh-session-memory
 corepack pnpm install
-corepack pnpm run build
-corepack pnpm pack --pack-destination dist
-$memoryTgz = (Get-ChildItem .\dist\mindspace-dsh-session-memory-*.tgz | Sort-Object LastWriteTime -Descending | Select-Object -First 1).FullName
+corepack pnpm run check
+$memoryTgz = (Get-ChildItem .\dist\mindspace-dsh-session-memory-0.4.1.tgz).FullName
 
 Set-Location C:\path\to\deepseek-harness
 corepack pnpm dsh plugin --profile web add $memoryTgz
@@ -111,35 +42,9 @@ corepack pnpm dsh --profile web --dump-config
 corepack pnpm dsh web
 ```
 
-不要在插件目录执行 `pnpm dsh`，也不要求全局安装 `dsh`；该命令属于官方 Harness
-checkout。仓库没有安装时构建脚本，以上步骤只会生成并安装明确的 tarball。历史
-GitHub Release 仅对应其 tag，不等同于本 README 描述的 `main` 功能。
+不要在插件目录执行 `pnpm dsh`。插件面向 DeepSeek Harness `0.1.1` 兼容线，独占 `mindspaceSessionMemory` Remote，不应与旧的内嵌 Mindspace Memory 同时安装。
 
-## 组合方式
-
-一个包只贡献一行，同时具有两面：宿主侧挂载记忆服务、独立侧车持久化、提示、模型工具、
-抽取钩子和 Typert 描述符；同一包声明 Web 客户端贡献，自行挂载 Remote 描述符并
-注册设置页。
-
-它不修改 DSH 源码、`api-remotes`、官方 bundle 或根 tsconfig。卸载只需：
-
-```sh
-corepack pnpm dsh plugin --profile web remove mindspace-dsh-session-memory
-```
-
-## 数据与模型调用
-
-修改保存在 `DSH_HOME/mindspace-session-memory/v1` 下按会话隔离的原子侧车文件中，绝不再
-向 DSH 原始会话 JSONL 写入插件事件；已有旧版记忆事件会在首次读取时一次性导入。界面用版本号进行乐观并发控制，避免静默
-覆盖。自动抽取默认关闭；如显式开启，它只是冷启动兜底：仅当可编辑记忆实际占用低于 20% 时，根 Agent 一轮
-完成后才可能额外发起一次模型请求；若该回合主模型已通过工具写入，则兜底不会重复
-运行；达到该比例后完全交回主模型按工具提示自行判断是否写入。它不读取或计入系统
-提示、RAG、上下文压缩、事件日志。辅助调用预算默认 6000 tokens；结果必须包含完整
-状态和仅针对耐久更新的审计清单，否则整批拒绝，不会留下半份
-记忆。明确事实与谨慎观察分开保存，敏感事实不得靠推测写入。
-
-如需开启自动兜底，可在后续 profile patch 中把 `autoExtract` 设为 `true`。默认 profile
-固定为工具/人工写入、每个偏好/对 AI 要求分区最多 3 张卡、用户画像最多 300 字。
+## 默认配置
 
 ```yaml
 - id: mindspace-session-memory
@@ -153,23 +58,13 @@ corepack pnpm dsh plugin --profile web remove mindspace-dsh-session-memory
     extractionMaxTokens: 6000
 ```
 
-## 兼容性
-
-首版面向公开的 DeepSeek Harness `0.1.0-rc` 系列以及 Node 22.19+ / Node 24+。
-Harness 当前仍是开发者预览，上游破坏性修改可能需要同步更新插件。
-
-近期 DSH 本体也带有实验性的 `session-memory` 字段和对应设置入口。本插件的
-profile patch 会先关闭这些内置行，再由本插件作为 Remote、侧车存储、提示词接入与
-可编辑 UI 的唯一所有者。后续开发必须保持每一套 session-memory schema / Remote
-namespace 只有一个所有者；同时启用两套实现会造成重复注册或竞争写入。
-
 ## 开发
 
-```sh
+```powershell
 pnpm install
 pnpm run build
 pnpm test
 pnpm pack --pack-destination dist
 ```
 
-许可证：MIT。
+本项目是社区插件，不属于 DeepSeek 官方项目。许可证：MIT。

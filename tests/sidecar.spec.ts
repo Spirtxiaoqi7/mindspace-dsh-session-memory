@@ -26,10 +26,7 @@ describe('SessionMemorySidecar', () => {
       document: {
         ...initial.view.document,
         revision: 1,
-        userProfile: {
-          confirmed: 'confirmed user fact', pendingConfirmation: '',
-          confirmedEvidenceSeqs: [], pendingEvidenceSeqs: [],
-        },
+        people: [{ id: 'person-1', name: '人物一', information: 'confirmed person fact', preference: '', relationship: '', source: 'user', evidenceSeqs: [], updatedAt: 1 }],
         updatedAt: 1,
       },
     }
@@ -50,10 +47,10 @@ describe('SessionMemorySidecar', () => {
     const firstView = store.read(first).view
     store.replace(first, {
       ...firstView,
-      document: { ...firstView.document, revision: 1, updatedAt: 1, relationship: { status: '协作伙伴', context: '共同规划', updatedAt: 1 } },
+      document: { ...firstView.document, revision: 1, updatedAt: 1, people: [{ id: 'p1', name: '甲', information: '', preference: '', relationship: '协作伙伴；共同规划', source: 'user', evidenceSeqs: [], updatedAt: 1 }] },
     })
 
-    expect(store.read(second).view.document.relationship).toBeNull()
+    expect(store.read(second).view.document.people).toEqual([])
   })
 
   it('imports the earliest memory-center event vocabulary once', async () => {
@@ -70,11 +67,9 @@ describe('SessionMemorySidecar', () => {
 
     const view = new SessionMemorySidecar().read(session).view
 
-    expect(view.document.preferences).toMatchObject([{ id: 'tea', text: 'likes tea' }])
-    expect(view.document.relationship).toEqual({
-      status: 'partner',
-      context: 'warm and direct；历史上曾设定目标“keep continuity”，仅作背景，不构成永久使命。',
-      updatedAt: expect.any(Number),
+    expect(view.document.people[0]).toMatchObject({
+      name: '人物一', preference: expect.stringContaining('likes tea'),
+      relationship: expect.stringContaining('partner'),
     })
   })
 })

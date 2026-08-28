@@ -1,73 +1,75 @@
-/**
- * Durable per-session storage outside DSH's canonical conversation event log.
- *
- * RC8 deliberately has no registration surface for third-party session event
- * types.  A plugin must therefore never use `Session.append()` as its durable
- * store: unknown event envelopes make a later stock DSH replay refuse the
- * complete conversation.  This small sidecar store imports the legacy fold on
- * first access, then owns all subsequent personalization and policy writes.
- */
+/** Durable per-session storage outside DSH's canonical conversation event log. */
 
 import { createHash, randomUUID } from 'node:crypto'
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import type { Session } from '@deepseek-ai/dsh-session'
-import { emptySessionMemory, foldCompactionPolicy, foldSessionMemory, migrateV2Document, normalizeCompactionPolicy, normalizeSessionMemoryDocument } from './fold.ts'
-import type { LegacySessionMemoryDocumentV2 } from './domain.ts'
-import type { ContextCompactionPolicy, SessionMemoryActivity, SessionMemoryDocument, SessionMemoryItem, SessionMemoryView } from './types.ts'
+import {
+  emptySessionMemory,
+  foldCompactionPolicy,
+  foldSessionMemory,
+  migrateV2Document,
+  migrateV3Document,
+  normalizeCompactionPolicy,
+} from './fold.ts'
+import type { LegacySessionMemoryDocumentV2, LegacySessionMemoryDocumentV3, LegacySessionMemoryItem } from './domain.ts'
+import type { ContextCompactionPolicy, SessionMemoryActivity, SessionMemoryView } from './types.ts'
 
 export interface StoredSessionMemory {
-  /** Bumped when the legacy import rules change. */
-  readonly format: 3
+  readonly format: 4
   readonly sessionId: string
   readonly view: SessionMemoryView
   readonly compactionPolicy: ContextCompactionPolicy
   readonly writtenAt: number
 }
 
-function dshHome(): string {
-  return process.env.DSH_HOME?.trim() || join(homedir(), '.dsh')
-}
-
-function sessionFilename(id: string): string {
-  return `${createHash('sha256').update(id).digest('hex')}.json`
-}
-
-function isStored(value: unknown, sessionId: string): value is StoredSessionMemory {
-  if (value === null || typeof value !== 'object') return false
-  const item = value as Partial<StoredSessionMemory>
-  return item.format === 3 && item.sessionId === sessionId
-    && item.view !== undefined && typeof item.view === 'object'
-    && item.compactionPolicy !== undefined && typeof item.compactionPolicy === 'object'
+interface LegacyStoredSessionMemoryV3 {
+  readonly format: 3
+  readonly sessionId: string
+  readonly view: { readonly document: LegacySessionMemoryDocumentV3; readonly memoryActivity: readonly unknown[] }
+  readonly compactionPolicy: ContextCompactionPolicy
+  readonly writtenAt: number
 }
 
 interface LegacyStoredSessionMemoryV2 {
   readonly format: 2
   readonly sessionId: string
-  readonly view: { readonly document: LegacySessionMemoryDocumentV2; readonly memoryActivity: readonly SessionMemoryActivity[] }
+  readonly view: { readonly document: LegacySessionMemoryDocumentV2; readonly memoryActivity: readonly unknown[] }
   readonly compactionPolicy: ContextCompactionPolicy
   readonly writtenAt: number
 }
 
-function isStoredV2(value: unknown, sessionId: string): value is LegacyStoredSessionMemoryV2 {
+function dshHome(): string { return process.env.DSH_HOME?.trim() || join(homedir(), '.dsh') }
+function sessionFilename(id: string): string { return `${createHash('sha256').update(id).digest('hex')}.json` }
+
+function storedBase(value: unknown, sessionId: string, format: number): value is Record<string, unknown> {
   if (value === null || typeof value !== 'object') return false
-  const item = value as Partial<LegacyStoredSessionMemoryV2>
-  return item.format === 2 && item.sessionId === sessionId
-    && item.view !== undefined && typeof item.view === 'object'
-    && item.compactionPolicy !== undefined && typeof item.compactionPolicy === 'object'
+  const row = value as Record<string, unknown>
+  return row['format'] === format && row['sessionId'] === sessionId
+    && row['view'] !== null && typeof row['view'] === 'object'
+    && row['compactionPolicy'] !== null && typeof row['compactionPolicy'] === 'object'
 }
 
-function migrateActivity(activity: SessionMemoryActivity): SessionMemoryActivity {
-  return activity.section === ('assistantInstructions' as SessionMemoryActivity['section'])
-    ? { ...activity, section: 'assistantRequirements' }
-    : activity
+function isStored(value: unknown, sessionId: string): value is StoredSessionMemory { return storedBase(value, sessionId, 4) }
+function isStoredV3(value: unknown, sessionId: string): value is LegacyStoredSessionMemoryV3 { return storedBase(value, sessionId, 3) }
+function isStoredV2(value: unknown, sessionId: string): value is LegacyStoredSessionMemoryV2 { return storedBase(value, sessionId, 2) }
+
+function migrateActivity(value: unknown): SessionMemoryActivity | undefined {
+  if (value === null || typeof value !== 'object') return undefined
+  const row = value as Record<string, unknown>
+  const oldSection = String(row['section'] ?? '')
+  const section: SessionMemoryActivity['section'] = oldSection === 'assistantRequirements' || oldSection === 'assistantInstructions'
+    ? 'assistantRequirements' : oldSection === 'roleplayPreset' ? 'memories' : 'people'
+  return { ...(row as unknown as SessionMemoryActivity), section }
 }
 
 type LegacyMemoryEvent = { readonly type: string; readonly seq: number; readonly data: Record<string, unknown> }
 
 function legacyMemoryView(events: readonly unknown[]): { readonly view: SessionMemoryView; readonly lastSeq: number } {
-  let document: SessionMemoryDocument = emptySessionMemory()
+  const preferences: LegacySessionMemoryItem[] = []
+  const requirements: LegacySessionMemoryItem[] = []
+  let relationship: LegacySessionMemoryDocumentV3['relationship'] = null
   let lastSeq = -1
   for (const raw of events) {
     if (raw === null || typeof raw !== 'object') continue
@@ -77,46 +79,45 @@ function legacyMemoryView(events: readonly unknown[]): { readonly view: SessionM
     lastSeq = typeof event.seq === 'number' ? event.seq : lastSeq
     if (event.type === 'memory/set') {
       const slot = data.slot
+      const target = slot === 'preferences' ? preferences : slot === 'instructions' ? requirements : undefined
       const text = typeof data.text === 'string' ? data.text.trim() : ''
-      if ((slot !== 'preferences' && slot !== 'instructions') || text.length === 0) continue
-      const section = slot === 'preferences' ? 'preferences' : 'assistantRequirements'
-      const id = typeof data.id === 'string' && data.id.trim().length > 0 ? data.id : `legacy-${section}-${lastSeq}`
-      const item: SessionMemoryItem = {
+      if (target === undefined || text === '') continue
+      const id = typeof data.id === 'string' && data.id.trim() ? data.id : `legacy-${slot}-${lastSeq}`
+      const next: LegacySessionMemoryItem = {
         id,
-        category: typeof data.category === 'string' && data.category.trim().length > 0
-          ? data.category : slot === 'preferences' ? '综合偏好' : '交互要求',
+        category: typeof data.category === 'string' && data.category.trim() ? data.category : slot === 'preferences' ? '综合偏好' : '对AI的要求',
         text,
         source: data.source === 'extracted' ? 'extracted' : 'user',
         evidenceSeqs: typeof data.evidenceSeq === 'number' ? [data.evidenceSeq] : [],
       }
-      const existing = document[section].filter(value => value.id !== id)
-      document = { ...document, [section]: [...existing, item], revision: Math.max(document.revision, 1), updatedAt: Date.now() }
-    } else if (event.type === 'memory/remove') {
-      const section = data.slot === 'preferences' ? 'preferences' : data.slot === 'instructions' ? 'assistantInstructions' : undefined
-      if (section === undefined || typeof data.id !== 'string') continue
-      const currentSection = section === 'assistantInstructions' ? 'assistantRequirements' : section
-      document = { ...document, [currentSection]: document[currentSection].filter(value => value.id !== data.id), revision: Math.max(document.revision, 1), updatedAt: Date.now() }
+      const at = target.findIndex(item => item.id === id)
+      if (at >= 0) target.splice(at, 1, next)
+      else target.push(next)
+    } else if (event.type === 'memory/remove' && typeof data.id === 'string') {
+      const target = data.slot === 'preferences' ? preferences : data.slot === 'instructions' ? requirements : undefined
+      if (target !== undefined) {
+        const at = target.findIndex(item => item.id === data.id)
+        if (at >= 0) target.splice(at, 1)
+      }
     } else if (event.type === 'memory/relationship') {
-      const role = typeof data.role === 'string' ? data.role.trim() : ''
-      if (role.length === 0) continue
-      document = {
-        ...document,
-        relationship: {
-          status: role,
-          context: [
-            typeof data.personaText === 'string' ? data.personaText.trim() : '',
-            typeof data.mission === 'string' && data.mission.trim().length > 0
-              ? `历史上曾设定目标“${data.mission.trim()}”，仅作背景，不构成永久使命。`
-              : '',
-          ].filter(Boolean).join('；'),
-          updatedAt: Date.now(),
-        },
-        revision: Math.max(document.revision, 1),
+      const status = typeof data.role === 'string' ? data.role.trim() : ''
+      if (status) relationship = {
+        status,
+        context: [
+          typeof data.personaText === 'string' ? data.personaText.trim() : '',
+          typeof data.mission === 'string' && data.mission.trim() ? `历史背景：${data.mission.trim()}` : '',
+        ].filter(Boolean).join('；'),
         updatedAt: Date.now(),
       }
     }
   }
-  return { view: { document: normalizeSessionMemoryDocument(document), memoryActivity: [] }, lastSeq }
+  if (lastSeq < 0) return { view: { document: emptySessionMemory(), memoryActivity: [] }, lastSeq }
+  const document = migrateV3Document({
+    version: 3, revision: 1,
+    userProfile: { confirmed: '', pendingConfirmation: '', confirmedEvidenceSeqs: [], pendingEvidenceSeqs: [] },
+    preferences, assistantRequirements: requirements, relationship, roleplayPreset: null, updatedAt: Date.now(),
+  })
+  return { view: { document, memoryActivity: [] }, lastSeq }
 }
 
 function importedView(session: Session): SessionMemoryView {
@@ -126,7 +127,6 @@ function importedView(session: Session): SessionMemoryView {
   return legacy.lastSeq > modernSeq ? legacy.view : modern
 }
 
-/** Synchronous, tiny JSON cache: prompt assembly must remain synchronous. */
 export class SessionMemorySidecar {
   private readonly root = join(dshHome(), 'mindspace-session-memory', 'v1')
   private readonly cache = new Map<string, StoredSessionMemory>()
@@ -139,64 +139,45 @@ export class SessionMemorySidecar {
       try {
         const parsed: unknown = JSON.parse(readFileSync(path, 'utf8'))
         if (isStored(parsed, session.id)) {
-          const stored: StoredSessionMemory = {
-            ...parsed,
-            compactionPolicy: normalizeCompactionPolicy(parsed.compactionPolicy),
-          }
+          const stored = { ...parsed, compactionPolicy: normalizeCompactionPolicy(parsed.compactionPolicy) }
           this.cache.set(session.id, stored)
           return stored
         }
-        if (isStoredV2(parsed, session.id)) {
+        if (isStoredV3(parsed, session.id) || isStoredV2(parsed, session.id)) {
+          const document = parsed.format === 3 ? migrateV3Document(parsed.view.document) : migrateV2Document(parsed.view.document)
           const migrated: StoredSessionMemory = {
-            format: 3,
-            sessionId: session.id,
-            view: {
-              document: migrateV2Document(parsed.view.document),
-              memoryActivity: parsed.view.memoryActivity.map(migrateActivity),
-            },
-            compactionPolicy: normalizeCompactionPolicy(parsed.compactionPolicy),
-            writtenAt: Date.now(),
+            format: 4, sessionId: session.id,
+            view: { document, memoryActivity: parsed.view.memoryActivity.map(migrateActivity).filter((item): item is SessionMemoryActivity => item !== undefined) },
+            compactionPolicy: normalizeCompactionPolicy(parsed.compactionPolicy), writtenAt: Date.now(),
           }
           this.write(migrated)
           return migrated
         }
       } catch {
-        // Keep the malformed sidecar untouched; a valid legacy fold below can
-        // still restore the visible document and will write a fresh artifact.
+        // A valid conversation fold below can still restore visible state.
       }
     }
     const imported: StoredSessionMemory = {
-      format: 3,
-      sessionId: session.id,
-      view: importedView(session),
-      compactionPolicy: foldCompactionPolicy(session.events),
-      writtenAt: Date.now(),
+      format: 4, sessionId: session.id, view: importedView(session),
+      compactionPolicy: foldCompactionPolicy(session.events), writtenAt: Date.now(),
     }
     this.write(imported)
     return imported
   }
 
   replace(session: Session, view: SessionMemoryView): StoredSessionMemory {
-    const current = this.read(session)
-    const next: StoredSessionMemory = { ...current, view, writtenAt: Date.now() }
+    const next: StoredSessionMemory = { ...this.read(session), view, writtenAt: Date.now() }
     this.write(next)
     return next
   }
 
   setPolicy(session: Session, policy: ContextCompactionPolicy): StoredSessionMemory {
-    const current = this.read(session)
-    const next: StoredSessionMemory = {
-      ...current,
-      compactionPolicy: normalizeCompactionPolicy(policy),
-      writtenAt: Date.now(),
-    }
+    const next: StoredSessionMemory = { ...this.read(session), compactionPolicy: normalizeCompactionPolicy(policy), writtenAt: Date.now() }
     this.write(next)
     return next
   }
 
-  private pathFor(sessionId: string): string {
-    return join(this.root, sessionFilename(sessionId))
-  }
+  private pathFor(sessionId: string): string { return join(this.root, sessionFilename(sessionId)) }
 
   private write(value: StoredSessionMemory): void {
     mkdirSync(this.root, { recursive: true })

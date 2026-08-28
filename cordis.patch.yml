@@ -1,10 +1,10 @@
-# Session-isolated personalization memory for DeepSeek Harness RC8 Web
+# Session-isolated multi-person memory for DeepSeek Harness 0.1.1 Web
 # profiles. This out-of-tree bundle owns the `mindspaceSessionMemory` Remote
 # namespace and settings entry. It deliberately does not patch or disable any
-# host memory rows: RC8 has no built-in rows with the old experimental ids, and
+# host memory rows: the supported line has no built-in rows with the old experimental ids, and
 # referring to absent rows makes a clean profile emit misleading warnings.
 
-# RC8 Web owns compaction inside each standing Agent preset. Do not revive the
+# DSH Web owns compaction inside each standing Agent preset. Do not revive the
 # disabled host-plane copies: doing so creates a second engine while the real
 # conversation keeps using the preset's default policy. The plugin resolves and
 # adapts the provider through `agent.ctx` instead.
@@ -16,7 +16,7 @@
         maxTextBytes: 4096
         maxItemsPerSection: 3
         maxProfileCharacters: 300
-        # DSH RC8 currently has no out-of-tree event-registration surface.
+        # DSH 0.1.1 currently has no out-of-tree event-registration surface.
         # Keep model-directed writes/manual editing only until persistence is
         # moved fully off the canonical session event log.
         autoExtract: false

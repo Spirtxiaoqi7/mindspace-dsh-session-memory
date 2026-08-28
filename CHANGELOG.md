@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.4.1
+
+- Preserved unchanged migrated V3 person text beyond 300 characters while keeping the limit for every newly edited value.
+
+## 0.4.0
+
+- Replaced the single-user V3 document with V4 multi-person memory: up to five ordered people, each with a stable id, name, information, one preference, and a relationship/background with the active AI.
+- Person one now represents the current speaker without defining that person as the AI's entire world or permanent principal.
+- Replaced the roleplay-only preset with up to three ordinary memory groups; AI requirements remain a separate three-card section.
+- Added lossless V1/V2/V3-to-V4 migration, including preservation of grandfathered profile text beyond the new 300-character edit limit.
+- Updated the model tools, extraction contract, Chinese prompt fields, strict Host/Remote descriptors, Memory Center UI, tests, and documentation.
+
 ## 0.3.2
 
 - Synchronized the generated Host/Remote type metadata with the V3 document schema.

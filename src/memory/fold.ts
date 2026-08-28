@@ -1,40 +1,28 @@
-/** Pure replay fold for per-session personalization memory. */
+/** Pure replay fold for per-session multi-person memory. */
 
 import type { SessionEvent } from '@deepseek-ai/dsh-session'
-import type { LegacySessionMemoryDocumentV1, LegacySessionMemoryDocumentV2 } from './domain.ts'
-import type { ContextCompactionPolicy, SessionMemoryDocument, SessionMemoryItem, SessionMemoryView } from './types.ts'
+import type {
+  LegacySessionMemoryDocumentV1,
+  LegacySessionMemoryDocumentV2,
+  LegacySessionMemoryDocumentV3,
+  LegacySessionMemoryItem,
+} from './domain.ts'
+import type { ContextCompactionPolicy, SessionMemoryActivity, SessionMemoryDocument, SessionMemoryItem, SessionMemoryView, SessionPerson } from './types.ts'
 
 export const DEFAULT_COMPACTION_POLICY: ContextCompactionPolicy = Object.freeze({
   enabled: true, thresholdRatio: 0.164, retainTokens: 64_000, maxTokens: 6_000, updatedAt: 0,
 })
 
-/**
- * Produce the exact plain-data shape used on the Typert Remote boundary.
- *
- * Early preview events did not all carry `updatedAt`.  They remain useful
- * historical settings, but must never make the read-only settings screen fail
- * its strict result validation.
- */
 export function normalizeCompactionPolicy(value: unknown): ContextCompactionPolicy {
-  const candidate = value !== null && typeof value === 'object'
-    ? value as Partial<ContextCompactionPolicy>
-    : {}
-  const thresholdRatio = Number.isFinite(candidate.thresholdRatio)
-    && candidate.thresholdRatio! >= 0.05 && candidate.thresholdRatio! <= 0.8
-    ? candidate.thresholdRatio!
-    : DEFAULT_COMPACTION_POLICY.thresholdRatio
-  const retainTokens = Number.isInteger(candidate.retainTokens) && candidate.retainTokens! >= 4096
-    ? candidate.retainTokens!
-    : DEFAULT_COMPACTION_POLICY.retainTokens
-  const maxTokens = Number.isInteger(candidate.maxTokens)
-    && candidate.maxTokens! >= 512 && candidate.maxTokens! <= 8192
-    ? candidate.maxTokens!
-    : DEFAULT_COMPACTION_POLICY.maxTokens
+  const candidate = value !== null && typeof value === 'object' ? value as Partial<ContextCompactionPolicy> : {}
   return {
     enabled: typeof candidate.enabled === 'boolean' ? candidate.enabled : DEFAULT_COMPACTION_POLICY.enabled,
-    thresholdRatio,
-    retainTokens,
-    maxTokens,
+    thresholdRatio: Number.isFinite(candidate.thresholdRatio) && candidate.thresholdRatio! >= 0.05 && candidate.thresholdRatio! <= 0.8
+      ? candidate.thresholdRatio! : DEFAULT_COMPACTION_POLICY.thresholdRatio,
+    retainTokens: Number.isInteger(candidate.retainTokens) && candidate.retainTokens! >= 4096
+      ? candidate.retainTokens! : DEFAULT_COMPACTION_POLICY.retainTokens,
+    maxTokens: Number.isInteger(candidate.maxTokens) && candidate.maxTokens! >= 512 && candidate.maxTokens! <= 8192
+      ? candidate.maxTokens! : DEFAULT_COMPACTION_POLICY.maxTokens,
     updatedAt: Number.isFinite(candidate.updatedAt) ? candidate.updatedAt! : 0,
   }
 }
@@ -45,25 +33,11 @@ export interface SessionMemoryFoldState {
   compactionPolicy: ContextCompactionPolicy
 }
 
-/** Empty state before a session has personalization edits. */
 export function emptySessionMemory(): SessionMemoryDocument {
-  return {
-    version: 3,
-    revision: 0,
-    userProfile: { confirmed: '', pendingConfirmation: '', confirmedEvidenceSeqs: [], pendingEvidenceSeqs: [] },
-    preferences: [],
-    assistantRequirements: [],
-    relationship: null,
-    roleplayPreset: null,
-    updatedAt: 0,
-  }
+  return { version: 4, revision: 0, people: [], assistantRequirements: [], memories: [], updatedAt: 0 }
 }
 
-function legacyCard(item: LegacySessionMemoryDocumentV1['preferences'][number], category: string): SessionMemoryItem {
-  return { ...item, category, evidenceSeqs: [...item.evidenceSeqs] }
-}
-
-function mergeCardText(current: string, incoming: string): string {
+function mergeText(current: string, incoming: string): string {
   const left = current.trim()
   const right = incoming.trim()
   if (left.length === 0) return right
@@ -72,109 +46,130 @@ function mergeCardText(current: string, incoming: string): string {
   return `${left}；${right}`
 }
 
-/** Repair historical duplicate categories deterministically before any new mutation is validated. */
-export function normalizeMemoryCards(
-  items: readonly SessionMemoryItem[],
-  fallbackCategory: string,
-): SessionMemoryItem[] {
+export function normalizeMemoryCards(items: readonly SessionMemoryItem[], fallbackCategory: string, limit = 3): SessionMemoryItem[] {
   const result: SessionMemoryItem[] = []
-  const categoryIndexes = new Map<string, number>()
+  const categories = new Map<string, number>()
   for (const [index, item] of items.entries()) {
     const category = item.category.trim() || fallbackCategory
     const text = item.text.trim()
     if (text.length === 0) continue
     const key = category.toLocaleLowerCase()
-    const duplicateAt = categoryIndexes.get(key)
-    if (duplicateAt !== undefined) {
-      const current = result[duplicateAt]!
-      result[duplicateAt] = {
+    const duplicate = categories.get(key)
+    if (duplicate !== undefined) {
+      const current = result[duplicate]!
+      result[duplicate] = {
         ...current,
-        text: mergeCardText(current.text, text),
+        text: mergeText(current.text, text),
         source: current.source === 'user' || item.source === 'user' ? 'user' : 'extracted',
         evidenceSeqs: [...new Set([...current.evidenceSeqs, ...item.evidenceSeqs])],
       }
       continue
     }
-    categoryIndexes.set(key, result.length)
-    result.push({
-      ...item,
-      id: item.id.trim() || `replayed-${fallbackCategory}-${index}`,
-      category,
-      text,
-      evidenceSeqs: [...new Set(item.evidenceSeqs)],
-    })
+    categories.set(key, result.length)
+    result.push({ ...item, id: item.id.trim() || `replayed-${fallbackCategory}-${index}`, category, text, evidenceSeqs: [...new Set(item.evidenceSeqs)] })
   }
-  while (result.length > 3) {
+  while (result.length > limit) {
     const overflow = result.pop()!
-    const target = result[2]!
-    result[2] = {
+    const target = result[result.length - 1]!
+    result[result.length - 1] = {
       ...target,
       category: `${target.category} / ${overflow.category}`,
-      text: mergeCardText(target.text, `${overflow.category}：${overflow.text}`),
-      source: target.source === 'user' || overflow.source === 'user' ? 'user' : 'extracted',
+      text: mergeText(target.text, `${overflow.category}：${overflow.text}`),
       evidenceSeqs: [...new Set([...target.evidenceSeqs, ...overflow.evidenceSeqs])],
     }
   }
   return result
 }
 
-/** Normalize persisted V2 documents so early preview builds cannot lock all later writes. */
+function normalizePeople(people: readonly SessionPerson[]): SessionPerson[] {
+  const result: SessionPerson[] = []
+  const ids = new Set<string>()
+  for (const [index, person] of people.entries()) {
+    const id = person.id.trim() || `person-${index + 1}`
+    if (ids.has(id)) continue
+    ids.add(id)
+    result.push({
+      ...person,
+      id,
+      name: person.name.trim() || `人物${index + 1}`,
+      information: person.information.trim(),
+      preference: person.preference.trim(),
+      relationship: person.relationship.trim(),
+      evidenceSeqs: [...new Set(person.evidenceSeqs)],
+      updatedAt: Number.isFinite(person.updatedAt) ? person.updatedAt : 0,
+    })
+    if (result.length === 5) break
+  }
+  return result
+}
+
 export function normalizeSessionMemoryDocument(document: SessionMemoryDocument): SessionMemoryDocument {
   return {
     ...document,
-    userProfile: {
-      confirmed: document.userProfile.confirmed.trim(),
-      pendingConfirmation: document.userProfile.pendingConfirmation.trim(),
-      confirmedEvidenceSeqs: [...new Set(document.userProfile.confirmedEvidenceSeqs)],
-      pendingEvidenceSeqs: [...new Set(document.userProfile.pendingEvidenceSeqs)],
-    },
-    preferences: normalizeMemoryCards(document.preferences, '综合偏好'),
+    version: 4,
+    people: normalizePeople(document.people),
     assistantRequirements: normalizeMemoryCards(document.assistantRequirements, '对AI的要求'),
+    memories: normalizeMemoryCards(document.memories, '记忆'),
   }
 }
 
-function migrateLegacyCards(
-  items: LegacySessionMemoryDocumentV1['preferences'],
-  category: string,
-): SessionMemoryItem[] {
-  return normalizeMemoryCards(items.map(item => legacyCard(item, category)), category)
+function legacyCard(item: { id: string; text: string; source: 'user' | 'extracted'; evidenceSeqs: readonly number[] }, category: string): SessionMemoryItem {
+  return { ...item, category, evidenceSeqs: [...item.evidenceSeqs] }
 }
 
-/** Lossless-enough migration of the editable v0.1 state. Compaction overrides are deliberately retired. */
-export function migrateLegacyDocument(document: LegacySessionMemoryDocumentV1): SessionMemoryDocument {
-  const facts = document.userFacts.map(item => item.text.trim()).filter(Boolean)
-  const factEvidence = document.userFacts.flatMap(item => item.evidenceSeqs)
-  return {
-    version: 3,
-    revision: document.revision,
-    userProfile: {
-      confirmed: facts.join('；'),
-      pendingConfirmation: '',
-      confirmedEvidenceSeqs: [...new Set(factEvidence)],
-      pendingEvidenceSeqs: [],
-    },
-    preferences: migrateLegacyCards(document.preferences, '综合偏好'),
-    assistantRequirements: migrateLegacyCards(document.assistantInstructions, '对AI的要求'),
-    relationship: migrateRelationship(document.relationship, document.updatedAt),
-    roleplayPreset: document.roleplayPreset ?? null,
-    updatedAt: document.updatedAt,
-  }
+function legacyCards(items: readonly LegacySessionMemoryItem[], fallback: string): SessionMemoryItem[] {
+  return normalizeMemoryCards(items.map(item => ({ ...item, evidenceSeqs: [...item.evidenceSeqs] })), fallback)
 }
 
-function migrateRelationship(
-  relationship: LegacySessionMemoryDocumentV2['relationship'],
-  updatedAt: number,
-): SessionMemoryDocument['relationship'] {
-  if (relationship === null) return null
-  const history = relationship.mission.trim().length === 0
-    ? relationship.guidance.trim()
-    : [relationship.guidance.trim(), `历史上曾设定目标“${relationship.mission.trim()}”，仅作背景，不构成永久使命。`].filter(Boolean).join('；')
-  return { status: relationship.role.trim(), context: history, updatedAt }
+function preferenceText(items: readonly LegacySessionMemoryItem[]): string {
+  return items.map(item => `${item.category.trim() || '偏好'}：${item.text.trim()}`).filter(value => !value.endsWith('：')).join('；')
 }
 
-/** Migrate the v0.2 profile and permanent-mission relationship into v0.3 semantics. */
-export function migrateV2Document(document: LegacySessionMemoryDocumentV2): SessionMemoryDocument {
+function relationshipText(relationship: LegacySessionMemoryDocumentV3['relationship']): string {
+  if (relationship === null) return ''
+  return [relationship.status.trim() ? `状态：${relationship.status.trim()}` : '', relationship.context.trim() ? `背景：${relationship.context.trim()}` : ''].filter(Boolean).join('；')
+}
+
+/** V3 -> V4: the former single user becomes unnamed person one without losing text. */
+export function migrateV3Document(document: LegacySessionMemoryDocumentV3): SessionMemoryDocument {
+  const information = [document.userProfile.confirmed.trim(), document.userProfile.pendingConfirmation.trim()].filter(Boolean).join('；')
+  const preference = preferenceText(document.preferences)
+  const relationship = relationshipText(document.relationship)
+  const evidenceSeqs = [...new Set([
+    ...document.userProfile.confirmedEvidenceSeqs,
+    ...document.userProfile.pendingEvidenceSeqs,
+    ...document.preferences.flatMap(item => item.evidenceSeqs),
+  ])]
+  const hasPerson = [information, preference, relationship].some(Boolean)
+  const people: SessionPerson[] = hasPerson ? [{
+    id: 'migrated-person-1', name: '人物一', information, preference, relationship,
+    source: document.preferences.some(item => item.source === 'extracted') ? 'extracted' : 'user',
+    evidenceSeqs, updatedAt: -1,
+  }] : []
+  const memories: SessionMemoryItem[] = document.roleplayPreset?.text.trim()
+    ? [{ id: 'memory-migrated-roleplay', category: '既有记忆', text: document.roleplayPreset.text.trim(), source: 'user', evidenceSeqs: [] }]
+    : []
   return normalizeSessionMemoryDocument({
+    version: 4,
+    revision: document.revision,
+    people,
+    assistantRequirements: legacyCards(document.assistantRequirements, '对AI的要求'),
+    memories,
+    updatedAt: document.updatedAt,
+  })
+}
+
+function v2Relationship(document: LegacySessionMemoryDocumentV2): LegacySessionMemoryDocumentV3['relationship'] {
+  if (document.relationship === null) return null
+  const context = [
+    document.relationship.guidance.trim(),
+    document.relationship.mission.trim() ? `历史背景：${document.relationship.mission.trim()}` : '',
+  ].filter(Boolean).join('；')
+  return { status: document.relationship.role.trim(), context, updatedAt: document.updatedAt }
+}
+
+export function migrateV2Document(document: LegacySessionMemoryDocumentV2): SessionMemoryDocument {
+  return migrateV3Document({
     version: 3,
     revision: document.revision,
     userProfile: {
@@ -183,56 +178,67 @@ export function migrateV2Document(document: LegacySessionMemoryDocumentV2): Sess
       confirmedEvidenceSeqs: [...document.userProfile.evidenceSeqs],
       pendingEvidenceSeqs: [...document.userProfile.evidenceSeqs],
     },
-    preferences: [...document.preferences],
-    assistantRequirements: [...document.assistantInstructions],
-    relationship: migrateRelationship(document.relationship, document.updatedAt),
+    preferences: document.preferences,
+    assistantRequirements: document.assistantInstructions,
+    relationship: v2Relationship(document),
     roleplayPreset: document.roleplayPreset,
     updatedAt: document.updatedAt,
   })
 }
 
-/** Initial replay state. */
+export function migrateLegacyDocument(document: LegacySessionMemoryDocumentV1): SessionMemoryDocument {
+  const facts = document.userFacts.map(item => item.text.trim()).filter(Boolean).join('；')
+  const v2: LegacySessionMemoryDocumentV2 = {
+    version: 2,
+    revision: document.revision,
+    userProfile: { confirmed: facts, inferred: '', evidenceSeqs: [...new Set(document.userFacts.flatMap(item => item.evidenceSeqs))] },
+    preferences: document.preferences.map(item => legacyCard(item, '综合偏好')),
+    assistantInstructions: document.assistantInstructions.map(item => legacyCard(item, '对AI的要求')),
+    relationship: document.relationship,
+    roleplayPreset: document.roleplayPreset ?? null,
+    updatedAt: document.updatedAt,
+  }
+  return migrateV2Document(v2)
+}
+
+function migrateActivity(activity: unknown): SessionMemoryActivity | undefined {
+  if (activity === null || typeof activity !== 'object') return undefined
+  const row = activity as Record<string, unknown>
+  const oldSection = String(row['section'] ?? '')
+  const section: SessionMemoryActivity['section'] = oldSection === 'assistantRequirements' || oldSection === 'assistantInstructions'
+    ? 'assistantRequirements' : oldSection === 'roleplayPreset' ? 'memories' : 'people'
+  return { ...(row as unknown as SessionMemoryActivity), section }
+}
+
 export function emptySessionMemoryFoldState(): SessionMemoryFoldState {
   return { document: emptySessionMemory(), memoryActivity: [], compactionPolicy: DEFAULT_COMPACTION_POLICY }
 }
 
-/** Apply one relevant event without scanning prior history. */
 export function applySessionMemoryEvent(state: SessionMemoryFoldState, event: SessionEvent): SessionMemoryFoldState {
   if ((event as { type: string }).type === 'mindspace-compaction/policy') {
     const value = (event as unknown as { data: unknown }).data
-    const normalized = normalizeCompactionPolicy(value)
-    if (value !== null && typeof value === 'object'
-      && 'enabled' in value && 'thresholdRatio' in value && 'retainTokens' in value && 'maxTokens' in value) {
-      return { ...state, compactionPolicy: normalized }
-    }
+    if (value !== null && typeof value === 'object') return { ...state, compactionPolicy: normalizeCompactionPolicy(value) }
   }
   if (event.type !== 'session-memory/change') return state
-  if (event.data.version === 1) {
-    return { ...state, document: migrateLegacyDocument(event.data.document as LegacySessionMemoryDocumentV1) }
-  }
-  if (event.data.version === 2) {
-    return { ...state, document: migrateV2Document(event.data.document as LegacySessionMemoryDocumentV2) }
-  }
-  return {
-    ...state,
-    document: normalizeSessionMemoryDocument(event.data.document),
-    memoryActivity: [...state.memoryActivity, ...event.data.changes],
-  }
+  const version = event.data.version
+  const document = version === 1 ? migrateLegacyDocument(event.data.document as LegacySessionMemoryDocumentV1)
+    : version === 2 ? migrateV2Document(event.data.document as LegacySessionMemoryDocumentV2)
+      : version === 3 ? migrateV3Document(event.data.document as LegacySessionMemoryDocumentV3)
+        : normalizeSessionMemoryDocument(event.data.document as SessionMemoryDocument)
+  const changes = 'changes' in event.data ? event.data.changes.map(migrateActivity).filter((item): item is SessionMemoryActivity => item !== undefined) : []
+  return { ...state, document, memoryActivity: [...state.memoryActivity, ...changes] }
 }
 
-/** Public view of one internal fold state. */
 export function sessionMemoryView(state: SessionMemoryFoldState): SessionMemoryView {
   return { document: state.document, memoryActivity: state.memoryActivity }
 }
 
-/** Read the policy without widening the established sessionMemory/get wire contract. */
 export function foldCompactionPolicy(events: readonly SessionEvent[]): ContextCompactionPolicy {
   let state = emptySessionMemoryFoldState()
   for (const event of events) state = applySessionMemoryEvent(state, event)
   return normalizeCompactionPolicy(state.compactionPolicy)
 }
 
-/** Fold one log into its latest editable document and activity ledger. */
 export function foldSessionMemory(events: readonly SessionEvent[]): SessionMemoryView {
   let state = emptySessionMemoryFoldState()
   for (const event of events) state = applySessionMemoryEvent(state, event)
