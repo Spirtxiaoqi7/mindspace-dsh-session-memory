@@ -8,7 +8,7 @@ import z from '@deepseek-ai/schemastery'
 import { z as zod } from 'zod'
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import type { Session, SessionEvent } from '@deepseek-ai/dsh-session'
-import type {} from '@deepseek-ai/dsh-system-prompt'
+import { PERSONA_ORDER, PERSONA_SECTION } from '@deepseek-ai/dsh-system-prompt'
 import type {} from '@deepseek-ai/dsh-session-projection'
 import { defineTool } from '@deepseek-ai/dsh-tools'
 import type { JsonValue } from '@deepseek-ai/dsh-session'
@@ -26,7 +26,7 @@ import {
   reviewOverwrites,
   turnExtractionInput,
 } from './extraction.ts'
-import { renderSessionMemory } from './render.ts'
+import { renderAssistantRequirements, renderSessionMemoryContext } from './render.ts'
 import { DEFAULT_AUTO_EXTRACT_BELOW_UTILIZATION, sessionMemoryUtilization } from './usage.ts'
 import type {
   ContextCompactionPolicy,
@@ -61,7 +61,7 @@ export {
   reviewOverwrites,
   turnExtractionInput,
 } from './extraction.ts'
-export { renderSessionMemory } from './render.ts'
+export { renderAssistantRequirements, renderSessionMemory, renderSessionMemoryContext } from './render.ts'
 export { DEFAULT_AUTO_EXTRACT_BELOW_UTILIZATION, sessionMemoryUtilization } from './usage.ts'
 export type { SessionMemoryUsageLimits } from './usage.ts'
 
@@ -132,17 +132,6 @@ const MEMORY_TOOL_GUIDANCE = [
   'groups worth carrying forward; it is not a roleplay preset and has no enabled switch. Update the matching person/card',
   'instead of appending duplicates. Never invent people or facts. These tools affect only this session.',
 ].join(' ')
-
-const NEW_SESSION_ONBOARDING = [
-  'This session has no personalization yet. Address the user request normally. Do not force onboarding questions.',
-  'Only when the user provides durable personalization, read memory first and store it under the explicit taxonomy.',
-].join(' ')
-
-function isEmptyDocument(document: SessionMemoryDocument): boolean {
-  return document.people.length === 0
-    && document.assistantRequirements.length === 0
-    && document.memories.length === 0
-}
 
 /** A model-owned memory write during this turn makes the cold-start fallback redundant. */
 function turnAlreadyWroteSessionMemory(events: readonly SessionEvent[], turn: number): boolean {
@@ -607,14 +596,14 @@ export class SessionMemoryService extends TypertRemoteService {
     if (this.installedAgents.has(agent)) return
     this.installedAgents.add(agent)
     agent.ctx.systemPrompt.section({
+      name: PERSONA_SECTION,
+      order: PERSONA_ORDER,
+      text: () => renderAssistantRequirements(this.get(agent)),
+    })
+    agent.ctx.systemPrompt.section({
       name: 'session-memory:personalization',
       order: 10,
-      text: () => {
-        const view = this.get(agent)
-        const turns = agent.session.events.filter(event => event.type === 'turn/start').length
-        const onboarding = turns === 1 && isEmptyDocument(view.document) ? `\n\n${NEW_SESSION_ONBOARDING}` : ''
-        return `${renderSessionMemory(view)}${onboarding}`
-      },
+      text: () => renderSessionMemoryContext(this.get(agent)),
     })
   }
 }

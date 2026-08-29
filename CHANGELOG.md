@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.5.0
+
+- Promoted explicit AI requirements to the session-owned DSH persona section, so they replace the preset persona instead of being appended after it.
+- An empty AI-requirements section now produces an empty persona; removed the forced new-session onboarding and empty-world prompt text.
+- Kept people and ordinary memories in a separate contextual prompt section so identity rules are not duplicated or mixed with remembered context.
+
 ## 0.4.1
 
 - Preserved unchanged migrated V3 person text beyond 300 characters while keeping the limit for every newly edited value.

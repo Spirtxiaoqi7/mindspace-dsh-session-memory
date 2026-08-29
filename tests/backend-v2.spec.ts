@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { emptySessionMemory, foldSessionMemory, migrateLegacyDocument } from '../src/memory/fold.ts'
 import { mergeExtraction, parseExtraction, parseOverwriteReview } from '../src/memory/extraction.ts'
-import { renderSessionMemory } from '../src/memory/render.ts'
+import { renderAssistantRequirements, renderSessionMemory, renderSessionMemoryContext } from '../src/memory/render.ts'
 import type { LegacySessionMemoryDocumentV1, LegacySessionMemoryDocumentV2, LegacySessionMemoryDocumentV3 } from '../src/memory/domain.ts'
 import type { ExtractionProposal } from '../src/memory/extraction.ts'
 
@@ -37,6 +37,23 @@ describe('V4 multi-person memory', () => {
     expect(text).toContain('个体名称：柒君')
     expect(text).toContain('人物偏好：喜欢直接沟通')
     expect(text).not.toContain('single user')
+  })
+
+  it('uses AI requirements as persona and leaves an empty document prompt-free', () => {
+    const empty = { document: emptySessionMemory(), memoryActivity: [] }
+    expect(renderAssistantRequirements(empty)).toBe('')
+    expect(renderSessionMemoryContext(empty)).toBe('')
+    expect(renderSessionMemory(empty)).toBe('')
+
+    const document = {
+      ...emptySessionMemory(),
+      assistantRequirements: [{ id: 'r1', category: '身份', text: '你叫镜鸢', source: 'user' as const, evidenceSeqs: [], updatedAt: 1 }],
+      memories: [{ id: 'm1', category: '经历', text: '一起看过海', source: 'user' as const, evidenceSeqs: [], updatedAt: 1 }],
+    }
+    const view = { document, memoryActivity: [] }
+    expect(renderAssistantRequirements(view)).toBe('对 AI 的要求：\n- 身份：你叫镜鸢')
+    expect(renderSessionMemoryContext(view)).toBe('记忆：\n- 经历：一起看过海')
+    expect(renderSessionMemoryContext(view)).not.toContain('你叫镜鸢')
   })
 
   it('requires exact overwrite decisions for people', () => {

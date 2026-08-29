@@ -1,16 +1,16 @@
 # DeepSeek Harness 的 Mindspace 多人物会话记忆
 
-这是一个可安装的 DeepSeek Harness 社区插件。0.4.1 将单一用户画像升级为按会话隔离、可编辑的多人物记忆，让 AI 记住的不只是当前发言者，也包括真实出现在这段关系与生活中的其他人物。
+这是一个可安装的 DeepSeek Harness 社区插件。0.5.0 将“对 AI 的要求”提升为当前会话的身份提示：它直接替换 Agent 预设 persona，而不是排在预设身份之后；没有要求时该身份段为空。人物和普通记忆仍作为独立上下文进入模型。
 
 ## 为什么改成多人物记忆
 
 长期智能体不应把当前 `user` 当作整个世界。传统单用户记忆越积越多，模型接触到的人物、关系与判断依据却仍然只围绕一个发言者收束；想让它重新思考时，若直接插入无关任务，又会破坏正在进行的角色扮演、工作或日常交流。
 
-0.4.1 选择改变“人物世界”，而不是强行改变当前任务：把真实出现过的人分别保存为独立人物，使新的关系信息能够在尽量不打断原任务的情况下，引入对“正在涉及谁、该如何理解、这件事能不能做”的重新判断。人物一只是当前发言者，不再被描述成唯一主体；最多五个人物都可以拥有自己的信息、偏好，以及与当前 AI 的关系和背景。
+0.5.0 不再注入空会话 onboarding 或空白的“人物世界”声明。只有实际存在的人物、普通记忆与明确要求才会进入模型；其中要求占据 persona 层，人物和记忆不与身份规则混写。
 
 这不是传统的多角色扮演，也不要求多个模型自动互聊。无人控制的 AI—AI 对话很容易形成自我叙述循环；本插件保留人的控制权，只为 AI 提供一个可以容纳更多真实人物的连续世界。未来可以接入多模型协作，但系统获得人物多样性并不依赖它。
 
-## 0.4.1 的记忆结构
+## 0.5.0 的记忆结构
 
 - **人物信息**：最多 5 人。人物一对应当前发言者，但不是 AI 世界里唯一的人。每人拥有稳定 id、个体名称和最多 300 字的个体信息；同名人物不会被自动合并。
 - **人物偏好**：与人物列表严格对齐，每人一段、最多 300 字。
@@ -42,7 +42,7 @@ git clone https://github.com/Spirtxiaoqi7/mindspace-dsh-session-memory.git
 Set-Location .\mindspace-dsh-session-memory
 corepack pnpm install
 corepack pnpm run check
-$memoryTgz = (Get-ChildItem .\dist\mindspace-dsh-session-memory-0.4.1.tgz).FullName
+$memoryTgz = (Get-ChildItem .\dist\mindspace-dsh-session-memory-0.5.0.tgz).FullName
 
 Set-Location C:\path\to\deepseek-harness
 corepack pnpm dsh plugin --profile web add $memoryTgz

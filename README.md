@@ -6,13 +6,13 @@
 
 An installable DeepSeek Harness community plugin for editable, session-isolated multi-person memory.
 
-Version 0.4.1 represents up to five ordered people. Person one is the current speaker, but is not treated as the AI's entire world. Every person has a stable id, name, information, one preference text, and a revisable relationship/background with the active AI. Explicit AI requirements and ordinary memories remain separate three-card sections.
+Version 0.5.0 promotes explicit AI requirements into the session-owned DSH persona section. They replace the Agent preset persona instead of being appended after it; when no requirements exist, the persona is empty. People and ordinary memories remain a separate contextual section.
 
 ## Why multi-person memory
 
 A long-running agent should not treat the current `user` as its entire world. Conventional single-user memory keeps accumulating information about one speaker while the people, relationships, and judgments available to the model remain structurally narrow. Injecting an unrelated task may force renewed reasoning, but it also disrupts ongoing roleplay, work, or ordinary conversation.
 
-Version 0.4.1 changes the agent's *people context* instead of forcibly changing its current task. Distinct real people are stored separately, so a new relationship can make the model reconsider who is involved, how the situation should be understood, and whether an action is appropriate, while leaving the ongoing task largely intact. Person one is merely the current speaker; up to five people can each have their own information, preference, and relationship/background with the active AI.
+Version 0.5.0 removes forced onboarding and empty-world prompt text. Only actual people, ordinary memories, and explicit requirements enter the model. Requirements occupy the persona layer; people and memories do not duplicate identity rules.
 
 This is not conventional multi-character roleplay, nor does it require autonomous model-to-model chatter. Unsupervised AI-to-AI conversation can collapse into a self-narrating loop. The plugin keeps people in control while giving the agent a continuous world containing more than one real person. Multi-model interaction may be added later, but the design does not depend on it.
 
@@ -29,7 +29,7 @@ git clone https://github.com/Spirtxiaoqi7/mindspace-dsh-session-memory.git
 Set-Location .\mindspace-dsh-session-memory
 corepack pnpm install
 corepack pnpm run check
-$memoryTgz = (Get-ChildItem .\dist\mindspace-dsh-session-memory-0.4.1.tgz).FullName
+$memoryTgz = (Get-ChildItem .\dist\mindspace-dsh-session-memory-0.5.0.tgz).FullName
 
 Set-Location C:\path\to\deepseek-harness
 corepack pnpm dsh plugin --profile web add $memoryTgz
