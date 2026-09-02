@@ -1,7 +1,7 @@
 {
   "name": "mindspace-dsh-session-memory",
-  "version": "0.5.0",
-  "description": "Editable, session-isolated multi-person memory for DeepSeek Harness",
+  "version": "0.6.1",
+  "description": "Task-conditioned Chat and Work session memory for DeepSeek Harness",
   "type": "module",
   "license": "MIT",
   "author": "Spirtxiaoqi7",
@@ -18,7 +18,8 @@
     "agent-memory",
     "session-memory",
     "personalization",
-    "multi-person-memory"
+    "multi-person-memory",
+    "chat-work-memory"
   ],
   "main": "lib/index.js",
   "exports": {
@@ -46,13 +47,14 @@
       "inject": [
         "@deepseek-ai/dsh-client-runtime",
         "@deepseek-ai/dsh-client-locale",
-        "@deepseek-ai/dsh-client-ui-settings"
+        "@deepseek-ai/dsh-client-ui-settings",
+        "@deepseek-ai/dsh-client-ui-conversation"
       ],
       "platform": "web"
     }
   },
   "scripts": {
-    "build": "node scripts/sync-generated-v4.mjs && node scripts/rescope-generated.mjs && tsdown && node scripts/normalize-build.mjs",
+    "build": "node scripts/sync-generated-v5.mjs && node scripts/rescope-generated.mjs && tsdown && node scripts/normalize-build.mjs",
     "test": "vitest run",
     "check": "pnpm run build && pnpm run test && pnpm pack --pack-destination dist"
   },

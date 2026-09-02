@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.6.1
+
+- Split one stable user/AI relationship into task-conditioned Chat and Work memory faces without changing tools or permissions.
+- Added model routing and a composer mode chip backed by the same session sidecar.
+- Added the neutral transition note and pending cross-domain write queue; inactive-mode facts are reviewed only after entering their target mode.
+- Migrated V1–V4 business data into Chat while leaving Work empty, and removed the retired automatic-extraction implementation.
+- Refined the Memory Center layout and made the composer chip follow model-side changes across live windows.
+
 ## 0.5.0
 
 - Promoted explicit AI requirements to the session-owned DSH persona section, so they replace the preset persona instead of being appended after it.

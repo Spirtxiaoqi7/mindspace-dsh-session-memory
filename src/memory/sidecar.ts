@@ -9,17 +9,26 @@ import {
   emptySessionMemory,
   foldCompactionPolicy,
   foldSessionMemory,
+  migrateV4Document,
   migrateV2Document,
   migrateV3Document,
   normalizeCompactionPolicy,
 } from './fold.ts'
-import type { LegacySessionMemoryDocumentV2, LegacySessionMemoryDocumentV3, LegacySessionMemoryItem } from './domain.ts'
+import type { LegacySessionMemoryDocumentV2, LegacySessionMemoryDocumentV3, LegacySessionMemoryDocumentV4, LegacySessionMemoryItem } from './domain.ts'
 import type { ContextCompactionPolicy, SessionMemoryActivity, SessionMemoryView } from './types.ts'
 
 export interface StoredSessionMemory {
-  readonly format: 4
+  readonly format: 5
   readonly sessionId: string
   readonly view: SessionMemoryView
+  readonly compactionPolicy: ContextCompactionPolicy
+  readonly writtenAt: number
+}
+
+interface LegacyStoredSessionMemoryV4 {
+  readonly format: 4
+  readonly sessionId: string
+  readonly view: { readonly document: LegacySessionMemoryDocumentV4; readonly memoryActivity: readonly unknown[] }
   readonly compactionPolicy: ContextCompactionPolicy
   readonly writtenAt: number
 }
@@ -51,7 +60,8 @@ function storedBase(value: unknown, sessionId: string, format: number): value is
     && row['compactionPolicy'] !== null && typeof row['compactionPolicy'] === 'object'
 }
 
-function isStored(value: unknown, sessionId: string): value is StoredSessionMemory { return storedBase(value, sessionId, 4) }
+function isStored(value: unknown, sessionId: string): value is StoredSessionMemory { return storedBase(value, sessionId, 5) }
+function isStoredV4(value: unknown, sessionId: string): value is LegacyStoredSessionMemoryV4 { return storedBase(value, sessionId, 4) }
 function isStoredV3(value: unknown, sessionId: string): value is LegacyStoredSessionMemoryV3 { return storedBase(value, sessionId, 3) }
 function isStoredV2(value: unknown, sessionId: string): value is LegacyStoredSessionMemoryV2 { return storedBase(value, sessionId, 2) }
 
@@ -61,7 +71,7 @@ function migrateActivity(value: unknown): SessionMemoryActivity | undefined {
   const oldSection = String(row['section'] ?? '')
   const section: SessionMemoryActivity['section'] = oldSection === 'assistantRequirements' || oldSection === 'assistantInstructions'
     ? 'assistantRequirements' : oldSection === 'roleplayPreset' ? 'memories' : 'people'
-  return { ...(row as unknown as SessionMemoryActivity), section }
+  return { ...(row as unknown as SessionMemoryActivity), section, mode: row['mode'] === 'work' ? 'work' : 'chat' }
 }
 
 type LegacyMemoryEvent = { readonly type: string; readonly seq: number; readonly data: Record<string, unknown> }
@@ -143,10 +153,10 @@ export class SessionMemorySidecar {
           this.cache.set(session.id, stored)
           return stored
         }
-        if (isStoredV3(parsed, session.id) || isStoredV2(parsed, session.id)) {
-          const document = parsed.format === 3 ? migrateV3Document(parsed.view.document) : migrateV2Document(parsed.view.document)
+        if (isStoredV4(parsed, session.id) || isStoredV3(parsed, session.id) || isStoredV2(parsed, session.id)) {
+          const document = parsed.format === 4 ? migrateV4Document(parsed.view.document) : parsed.format === 3 ? migrateV3Document(parsed.view.document) : migrateV2Document(parsed.view.document)
           const migrated: StoredSessionMemory = {
-            format: 4, sessionId: session.id,
+            format: 5, sessionId: session.id,
             view: { document, memoryActivity: parsed.view.memoryActivity.map(migrateActivity).filter((item): item is SessionMemoryActivity => item !== undefined) },
             compactionPolicy: normalizeCompactionPolicy(parsed.compactionPolicy), writtenAt: Date.now(),
           }
@@ -158,7 +168,7 @@ export class SessionMemorySidecar {
       }
     }
     const imported: StoredSessionMemory = {
-      format: 4, sessionId: session.id, view: importedView(session),
+      format: 5, sessionId: session.id, view: importedView(session),
       compactionPolicy: foldCompactionPolicy(session.events), writtenAt: Date.now(),
     }
     this.write(imported)

@@ -10,19 +10,33 @@ const _sessionMemoryPerson$schema = z.object({
 }).readonly()
 const _sessionMemoryItem$schema = z.object({
   'id': z.string().readonly(), 'category': z.string().readonly(), 'text': z.string().readonly(),
-  'source': z.union([z.literal("user"), z.literal("extracted")]).readonly(),
-  'evidenceSeqs': z.array(z.number()).readonly(),
+  'source': z.union([z.literal("user"), z.literal("extracted")]).readonly(), 'evidenceSeqs': z.array(z.number()).readonly(),
 }).readonly()
+const _sessionModeMemory$schema = z.object({
+  'people': z.array(_sessionMemoryPerson$schema).readonly(), 'assistantSetting': z.string().readonly(),
+  'assistantState': z.string().readonly(), 'assistantRequirements': z.array(_sessionMemoryItem$schema).readonly(),
+  'memories': z.array(_sessionMemoryItem$schema).readonly(),
+}).readonly()
+const _pendingWrite$schema = z.object({
+  'id': z.string().readonly(), 'fromMode': z.union([z.literal("chat"), z.literal("work")]).readonly(),
+  'targetMode': z.union([z.literal("chat"), z.literal("work")]).readonly(), 'instruction': z.string().readonly(),
+  'suggestedAction': z.union([z.literal("add_person"), z.literal("update_person"), z.literal("remove_person"), z.literal("upsert_item"), z.literal("remove_item")]).readonly(),
+  'suggestedSection': z.union([z.literal("assistantRequirements"), z.literal("memories"), z.undefined()]).readonly(),
+  'sourceSeqs': z.array(z.number()).readonly(), 'createdAt': z.number().readonly(),
+}).readonly()
+const _bridge$schema = z.object({ 'transitionNote': z.string().readonly(), 'pendingWrites': z.array(_pendingWrite$schema).readonly() }).readonly()
 const _sessionMemoryDocument$schema = z.object({
-  'version': z.literal(4).readonly(), 'revision': z.number().readonly(),
-  'people': z.array(_sessionMemoryPerson$schema).readonly(),
-  'assistantRequirements': z.array(_sessionMemoryItem$schema).readonly(),
-  'memories': z.array(_sessionMemoryItem$schema).readonly(), 'updatedAt': z.number().readonly(),
+  'version': z.literal(5).readonly(), 'revision': z.number().readonly(),
+  'activeMode': z.union([z.literal("chat"), z.literal("work")]).readonly(),
+  'modeSource': z.union([z.literal("user"), z.literal("model"), z.literal("migration")]).readonly(),
+  'modeReason': z.string().readonly(), 'chat': _sessionModeMemory$schema, 'work': _sessionModeMemory$schema,
+  'bridge': _bridge$schema, 'updatedAt': z.number().readonly(),
 }).readonly()
 const _sessionMemoryActivity$schema = z.object({
   'id': z.string().readonly(), 'sourceSeqs': z.array(z.number()).readonly(),
-  'operation': z.union([z.literal("append"), z.literal("merge"), z.literal("replace"), z.literal("skip")]).readonly(),
-  'section': z.union([z.literal("people"), z.literal("assistantRequirements"), z.literal("memories")]).readonly(),
+  'operation': z.union([z.literal("append"), z.literal("merge"), z.literal("replace"), z.literal("skip"), z.literal("switch"), z.literal("stage"), z.literal("consume")]).readonly(),
+  'section': z.union([z.literal("people"), z.literal("assistantSetting"), z.literal("assistantState"), z.literal("assistantRequirements"), z.literal("memories"), z.literal("bridge")]).readonly(),
+  'mode': z.union([z.literal(null), z.literal("chat"), z.literal("work")]).readonly(),
   'before': z.union([z.literal(null), z.string()]).readonly(), 'after': z.union([z.literal(null), z.string()]).readonly(),
   'reason': z.string().readonly(), 'at': z.number().readonly(),
 }).readonly()
@@ -31,17 +45,15 @@ const _deepseek_ai_dsh_session_memory_governance_sessionMemory_get_result$schema
 })
 const _deepseek_ai_dsh_session_memory_governance_sessionMemory_replace_parameter_0$schema = z.intersection(z.string(), z.unknown())
 const _deepseek_ai_dsh_session_memory_governance_sessionMemory_replace_parameter_1$schema = z.object({
-  'expectedRevision': z.number().readonly(), 'people': z.array(_sessionMemoryPerson$schema).readonly(),
-  'assistantRequirements': z.array(_sessionMemoryItem$schema).readonly(), 'memories': z.array(_sessionMemoryItem$schema).readonly(),
+  'expectedRevision': z.number().readonly(), 'activeMode': z.union([z.literal("chat"), z.literal("work")]).readonly(),
+  'modeSource': z.union([z.literal("user"), z.literal("model"), z.literal("migration")]).readonly(), 'modeReason': z.string().readonly(),
+  'chat': _sessionModeMemory$schema, 'work': _sessionModeMemory$schema, 'bridge': _bridge$schema,
 })
 const _deepseek_ai_dsh_session_memory_governance_sessionMemory_replace_result$schema = z.union([z.object({
-  'ok': z.literal(true).readonly(), 'value': z.object({
-    'document': _sessionMemoryDocument$schema, 'memoryActivity': z.array(_sessionMemoryActivity$schema).readonly(),
-  }).readonly(),
+  'ok': z.literal(true).readonly(), 'value': z.object({ 'document': _sessionMemoryDocument$schema, 'memoryActivity': z.array(_sessionMemoryActivity$schema).readonly() }).readonly(),
 }), z.object({
   'ok': z.literal(false).readonly(), 'error': z.object({
-    'code': z.union([z.literal("stale-revision"), z.literal("invalid-document"), z.literal("text-too-large")]).readonly(),
-    'message': z.string().readonly(),
+    'code': z.union([z.literal("stale-revision"), z.literal("invalid-document"), z.literal("text-too-large")]).readonly(), 'message': z.string().readonly(),
   }).readonly(),
 })])
 

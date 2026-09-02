@@ -1,19 +1,18 @@
-/** Client-safe values for one session's editable multi-person memory. */
+/** Client-safe values for one session's task-conditioned memory. */
 
-/** One person represented in the current conversation world. */
+export type SessionMemoryMode = 'chat' | 'work'
+
 export interface SessionPerson {
   readonly id: string
   readonly name: string
   readonly information: string
   readonly preference: string
-  /** This person's current relationship and background with the active AI. */
   readonly relationship: string
   readonly source: 'user' | 'extracted'
   readonly evidenceSeqs: readonly number[]
   readonly updatedAt: number
 }
 
-/** One categorized AI requirement or one ordinary memory group. */
 export interface SessionMemoryItem {
   readonly id: string
   readonly category: string
@@ -22,31 +21,59 @@ export interface SessionMemoryItem {
   readonly evidenceSeqs: readonly number[]
 }
 
-export type SessionMemorySection = 'people' | 'assistantRequirements' | 'memories'
+/** One face of the same user and AI. Labels differ by mode; storage does not. */
+export interface SessionModeMemory {
+  readonly people: readonly SessionPerson[]
+  readonly assistantSetting: string
+  /** Chat: outfit/current appearance. Work: current work role/state. */
+  readonly assistantState: string
+  readonly assistantRequirements: readonly SessionMemoryItem[]
+  readonly memories: readonly SessionMemoryItem[]
+}
 
-/** One inspectable state transition produced by a manual or automatic merge. */
+export interface BridgePendingWrite {
+  readonly id: string
+  readonly fromMode: SessionMemoryMode
+  readonly targetMode: SessionMemoryMode
+  readonly instruction: string
+  readonly suggestedAction: 'add_person' | 'update_person' | 'remove_person' | 'upsert_item' | 'remove_item'
+  readonly suggestedSection?: 'assistantRequirements' | 'memories'
+  readonly sourceSeqs: readonly number[]
+  readonly createdAt: number
+}
+
+export interface SessionMemoryBridge {
+  /** Neutral hand-off only; never a second long-term memory. */
+  readonly transitionNote: string
+  readonly pendingWrites: readonly BridgePendingWrite[]
+}
+
+export type SessionMemorySection = 'people' | 'assistantSetting' | 'assistantState' | 'assistantRequirements' | 'memories' | 'bridge'
+
 export interface SessionMemoryActivity {
   readonly id: string
   readonly sourceSeqs: readonly number[]
-  readonly operation: 'append' | 'merge' | 'replace' | 'skip'
+  readonly operation: 'append' | 'merge' | 'replace' | 'skip' | 'switch' | 'stage' | 'consume'
   readonly section: SessionMemorySection
+  readonly mode: SessionMemoryMode | null
   readonly before: string | null
   readonly after: string | null
   readonly reason: string
   readonly at: number
 }
 
-/** Complete current memory state of one session. */
 export interface SessionMemoryDocument {
-  readonly version: 4
+  readonly version: 5
   readonly revision: number
-  readonly people: readonly SessionPerson[]
-  readonly assistantRequirements: readonly SessionMemoryItem[]
-  readonly memories: readonly SessionMemoryItem[]
+  readonly activeMode: SessionMemoryMode
+  readonly modeSource: 'user' | 'model' | 'migration'
+  readonly modeReason: string
+  readonly chat: SessionModeMemory
+  readonly work: SessionModeMemory
+  readonly bridge: SessionMemoryBridge
   readonly updatedAt: number
 }
 
-/** User-owned native context-compaction controls, isolated to one session. */
 export interface ContextCompactionPolicy {
   readonly enabled: boolean
   readonly thresholdRatio: number
@@ -62,9 +89,12 @@ export interface SessionMemoryView {
 
 export interface ReplaceSessionMemoryRequest {
   readonly expectedRevision: number
-  readonly people: readonly SessionPerson[]
-  readonly assistantRequirements: readonly SessionMemoryItem[]
-  readonly memories: readonly SessionMemoryItem[]
+  readonly activeMode: SessionMemoryMode
+  readonly modeSource: 'user' | 'model' | 'migration'
+  readonly modeReason: string
+  readonly chat: SessionModeMemory
+  readonly work: SessionModeMemory
+  readonly bridge: SessionMemoryBridge
 }
 
 export interface SessionMemoryFailure {
@@ -77,7 +107,5 @@ export type SessionMemoryMutationResult =
   | { readonly ok: false; readonly error: SessionMemoryFailure }
 
 declare module '@deepseek-ai/dsh-session-projection/types' {
-  interface SessionProjectionMap {
-    'session-memory': SessionMemoryView
-  }
+  interface SessionProjectionMap { 'session-memory': SessionMemoryView }
 }

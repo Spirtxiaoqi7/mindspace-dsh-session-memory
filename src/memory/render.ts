@@ -1,4 +1,4 @@
-/** Model-facing rendering of the current session-memory document. */
+/** Model-facing rendering. Only the selected face is rendered in detail. */
 
 import type { SessionMemoryItem, SessionMemoryView } from './types.ts'
 
@@ -8,28 +8,36 @@ function cards(label: string, values: readonly SessionMemoryItem[]): string {
   return values.length === 0 ? '' : `${label}：\n${values.map(value => `- ${value.category}：${value.text}`).join('\n')}`
 }
 
-/** The session-owned persona. Empty requirements deliberately mean no persona. */
-export function renderAssistantRequirements(view: SessionMemoryView): string {
-  return cards('对 AI 的要求', view.document.assistantRequirements)
+export function renderAssistantRequirements(view: SessionMemoryView, mode = view.document.activeMode): string {
+  return cards('对 AI 的要求', view.document[mode].assistantRequirements)
 }
 
-/** People and ordinary memories are context, not identity or standing orders. */
-export function renderSessionMemoryContext(view: SessionMemoryView): string {
-  const { document } = view
-  const people = document.people.map((person, index) => [
+export function renderSessionMemoryContext(view: SessionMemoryView, mode = view.document.activeMode): string {
+  const state = view.document[mode]
+  const people = state.people.map((person, index) => [
     `人物${numerals[index] ?? index + 1}`,
     `个体名称：${person.name}`,
-    person.information ? `个体信息：${person.information}` : '',
-    person.preference ? `人物偏好：${person.preference}` : '',
-    person.relationship ? `与当前 AI 的关系及背景：${person.relationship}` : '',
+    person.information ? `${mode === 'chat' ? '日常信息' : '工作信息'}：${person.information}` : '',
+    person.preference ? `${mode === 'chat' ? '日常偏好' : '工作偏好'}：${person.preference}` : '',
+    person.relationship ? `${mode === 'chat' ? '与当前 AI 的关系' : '协作关系'}：${person.relationship}` : '',
   ].filter(Boolean).join('\n')).join('\n\n')
   return [
-    people ? `这段对话中存在以下人物。人物一对应当前发言者；其他人物同样构成这个世界并可能影响当前判断。\n\n人物信息：\n${people}` : '',
-    cards('记忆', document.memories),
+    `当前记忆模式：${mode === 'chat' ? 'Chat（日常）' : 'Work（工作）'}。这只是上下文状态，不限制任何工具或行为。`,
+    people ? `人物信息：\n${people}` : '',
+    state.assistantSetting ? `AI 设定：${state.assistantSetting}` : '',
+    state.assistantState ? `${mode === 'chat' ? 'AI 当前衣着与外观' : 'AI 当前工作状态'}：${state.assistantState}` : '',
+    cards(mode === 'chat' ? '长期日常记忆' : '长期工作记忆', state.memories),
   ].filter(Boolean).join('\n\n')
 }
 
-/** Full model-facing Memory text, retained as a public rendering helper. */
-export function renderSessionMemory(view: SessionMemoryView): string {
-  return [renderAssistantRequirements(view), renderSessionMemoryContext(view)].filter(Boolean).join('\n\n')
+export function renderBridge(view: SessionMemoryView): string {
+  const bridge = view.document.bridge
+  return [
+    bridge.transitionNote ? `最近转场：${bridge.transitionNote}` : '',
+    bridge.pendingWrites.length ? `待目标模式处理的跨域写入：${bridge.pendingWrites.map(item => `${item.id} -> ${item.targetMode}: ${item.instruction}`).join('；')}` : '',
+  ].filter(Boolean).join('\n')
+}
+
+export function renderSessionMemory(view: SessionMemoryView, mode = view.document.activeMode): string {
+  return [renderAssistantRequirements(view, mode), renderSessionMemoryContext(view, mode), renderBridge(view)].filter(Boolean).join('\n\n')
 }

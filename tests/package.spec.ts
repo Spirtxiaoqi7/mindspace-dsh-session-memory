@@ -7,12 +7,13 @@ const root = resolve(import.meta.dirname, '..')
 describe('installable DSH bundle', () => {
   it('declares one bundle patch and a web client', () => {
     const manifest = JSON.parse(readFileSync(resolve(root, 'package.json'), 'utf8'))
-    expect(manifest.version).toBe('0.5.0')
+    expect(manifest.version).toBe('0.6.1')
     for (const [name, range] of Object.entries(manifest.peerDependencies)) {
       if (name.startsWith('@deepseek-ai/dsh-')) expect(range).toBe('>=0.1.1-rc.2 <0.2.0')
     }
     expect(manifest.dsh.bundle.patch).toBe('./cordis.patch.yml')
     expect(manifest.dsh.client.platform).toBe('web')
+    expect(manifest.dsh.client.inject).toContain('@deepseek-ai/dsh-client-ui-conversation')
     expect(manifest.exports['.']).toBe('./lib/index.js')
     expect(manifest.exports['./typert']).toBeUndefined()
   })

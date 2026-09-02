@@ -1,9 +1,10 @@
 /** Browser settings contribution with a self-mounted session-memory Remote. */
 import type { ClientContext } from '@deepseek-ai/dsh-client-runtime/client'
 import type {} from '@deepseek-ai/dsh-client-ui-settings/client'
+import type {} from '@deepseek-ai/dsh-client-ui-conversation/client'
 import type {} from '@deepseek-ai/dsh-client-locale/client'
 import sessionMemoryRemote from '../generated/remote.js'
-import { SessionMemorySection } from './SessionMemorySection.tsx'
+import { MemoryModeChip, SessionMemorySection } from './SessionMemorySection.tsx'
 import type { SessionMemorySectionInjected } from './SessionMemorySection.tsx'
 import { en, zh, type SessionMemoryKey } from './locales.ts'
 
@@ -24,13 +25,15 @@ export async function apply(ctx: ClientContext): Promise<void> {
   const t = ctx.locale.bind(ns) as SessionMemorySectionInjected['t']
   const remote = ctx.get('remote.mindspaceSessionMemory') as SessionMemorySectionInjected['remote']
   if (remote === undefined) throw new Error('mindspace-session-memory: Remote mount did not publish its namespace')
-  const commands = ctx.get('remote.commands') as SessionMemorySectionInjected['commands']
   ctx.slots.inject('settings.section', () => ctx.slots.register({
     name: 'settings.section', id: 'personalization', order: 20, label: () => t('nav'),
     inject: (): SessionMemorySectionInjected => ({
       remote,
-      commands,
       t,
     }),
   }, SessionMemorySection))
+  ctx.slots.inject('conversation.input.left', () => ctx.slots.register({
+    name: 'conversation.input.left', id: 'session-memory-mode', order: 40,
+    inject: () => ({ remote }),
+  }, MemoryModeChip))
 }

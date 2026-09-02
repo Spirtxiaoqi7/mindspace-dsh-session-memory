@@ -1,7 +1,16 @@
 /** Durable session-memory event vocabulary and legacy schemas. */
 
 import type { ContentBlock } from '@deepseek-ai/dsh-llm/types'
-import type { SessionMemoryActivity, SessionMemoryDocument, SessionMemoryItem } from './types.ts'
+import type { SessionMemoryActivity, SessionMemoryDocument, SessionMemoryItem, SessionPerson } from './types.ts'
+
+export interface LegacySessionMemoryDocumentV4 {
+  readonly version: 4
+  readonly revision: number
+  readonly people: readonly SessionPerson[]
+  readonly assistantRequirements: readonly SessionMemoryItem[]
+  readonly memories: readonly SessionMemoryItem[]
+  readonly updatedAt: number
+}
 
 export interface LegacySessionRoleplayPreset { readonly enabled: boolean; readonly text: string }
 export interface LegacySessionMemoryItem {
@@ -63,10 +72,11 @@ export type SessionMemoryChangeEventData =
   | { readonly version: 1; readonly operation: 'replace'; readonly document: LegacySessionMemoryDocumentV1 }
   | { readonly version: 2; readonly operation: 'replace'; readonly document: LegacySessionMemoryDocumentV2; readonly changes: readonly SessionMemoryActivity[] }
   | { readonly version: 3; readonly operation: 'replace'; readonly document: LegacySessionMemoryDocumentV3; readonly changes: readonly SessionMemoryActivity[] }
-  | { readonly version: 4; readonly operation: 'replace'; readonly document: SessionMemoryDocument; readonly changes: readonly SessionMemoryActivity[] }
+  | { readonly version: 4; readonly operation: 'replace'; readonly document: LegacySessionMemoryDocumentV4; readonly changes: readonly SessionMemoryActivity[] }
+  | { readonly version: 5; readonly operation: 'replace'; readonly document: SessionMemoryDocument; readonly changes: readonly SessionMemoryActivity[] }
 
 export interface SessionMemoryExtractionRequestEventData {
-  readonly version: 1 | 2 | 3 | 4
+  readonly version: 1 | 2 | 3 | 4 | 5
   readonly turn: number
   readonly provider: string
   readonly model: string
@@ -77,7 +87,7 @@ export interface SessionMemoryExtractionRequestEventData {
 }
 
 export interface SessionMemoryExtractionResultEventData {
-  readonly version: 1 | 2 | 3 | 4
+  readonly version: 1 | 2 | 3 | 4 | 5
   readonly turn: number
   readonly rawOutput: ContentBlock[]
   readonly accepted: boolean
