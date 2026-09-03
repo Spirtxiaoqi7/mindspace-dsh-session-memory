@@ -42,3 +42,15 @@ export function renderBridge(view: SessionMemoryView): string {
 export function renderSessionMemory(view: SessionMemoryView, mode = view.document.activeMode): string {
   return [renderAssistantRequirements(view, mode), renderSessionMemoryContext(view, mode), renderBridge(view)].filter(Boolean).join('\n\n')
 }
+
+/** Compact tool-facing state. Full activity history belongs to the Memory Center, not model context. */
+export function modelSessionMemorySnapshot(view: SessionMemoryView) {
+  const { document } = view
+  return {
+    activeMode: document.activeMode,
+    modeSource: document.modeSource,
+    modeReason: document.modeReason,
+    memory: document[document.activeMode],
+    bridge: document.bridge,
+  }
+}

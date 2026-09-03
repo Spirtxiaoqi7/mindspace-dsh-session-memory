@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.6.6
+
+- Turned `get_session_memory` into a compact authoritative model inspection tool: it now returns only the active memory face and bridge instead of replaying the entire audit history into model context.
+- Required a memory read when the user asks what is stored, says a claimed state is not visible, or disputes a remembered fact; an empty field must be acknowledged and corrected rather than covered with conversational prose.
+
 ## 0.6.5
 
 - Made explicit, user-confirmed memory changes an in-turn model duty instead of an optional suggestion, including contextual confirmations such as “this outfit” and “keep it this way”.

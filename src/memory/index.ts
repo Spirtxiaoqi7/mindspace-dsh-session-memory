@@ -17,7 +17,7 @@ import { normalizeCompactionPolicy, normalizeSessionMemoryDocument } from './fol
 import { installAutomaticCompactionFallback, installSessionCompactionPolicyBridge, readSessionCompactionStatus } from './compaction-bridge.ts'
 import { SessionMemorySidecar } from './sidecar.ts'
 import { applyMemoryMutation, mutationInstruction, type MutationArgs } from './mutation.ts'
-import { renderAssistantRequirements, renderBridge, renderSessionMemory, renderSessionMemoryContext } from './render.ts'
+import { modelSessionMemorySnapshot, renderAssistantRequirements, renderBridge, renderSessionMemory, renderSessionMemoryContext } from './render.ts'
 import type { BridgePendingWrite, ContextCompactionPolicy, ContextCompactionStatus, ReplaceSessionMemoryRequest, SessionMemoryActivity, SessionMemoryDocument, SessionMemoryFailure, SessionMemoryItem, SessionMemoryMode, SessionMemoryMutationResult, SessionMemorySection, SessionMemoryView, SessionModeMemory, SessionPerson } from './types.ts'
 
 export type * from './types.ts'
@@ -41,6 +41,7 @@ export const MEMORY_TOOL_GUIDANCE = [
   'Memory write duty: when the user explicitly establishes, confirms, corrects, or changes a person, relationship, name, durable preference, instruction for the AI, long-lived fact, or the AI current state, call update_session_memory in that same turn. The user does not need to say "remember". Resolve confirmations such as "this outfit", "keep it this way", or "do this from now on" from the immediately preceding context.',
   'Use set_assistant_state for current Chat appearance/outfit or current Work role/state, and set_assistant_setting for the stable AI definition. Do not merely enact a confirmed state in prose: persist it as part of completing the request.',
   'Ordinary small talk, momentary actions, one-off tasks, and unconfirmed guesses are not memory. Direct writes are atomic and do not require a preceding read; use get_session_memory only when the existing state or ids are genuinely needed.',
+  'Verification duty: when the user asks what is currently remembered, says the claimed state is not visible, or disputes a remembered fact, call get_session_memory before answering. Treat the tool result as authoritative. If the field is empty or inconsistent, say so and persist a user-confirmed correction instead of claiming that prose already changed memory.',
   'Direct writes may only target the active mode. A fact for the other mode must be staged with update_session_memory target_mode; do not place it in the current mode.',
   'After entering a mode, review pending writes targeted there. Use resolve_pending_memory to apply a consolidated update or explicitly skip it; only then is that pending item cleared.',
   'The bridge contains only a short transition note and pending write instructions. Never use it as a second long-term memory. Never invent people or facts.',
@@ -176,11 +177,11 @@ export class SessionMemoryService extends TypertRemoteService {
       },
     }))
     this.ctx.tools.register(defineTool({
-      name: 'get_session_memory', description: 'Read both memory faces, active mode, neutral bridge, and activity when existing details or ids are needed. Ordinary atomic writes do not require this first.', parameters: {},
+      name: 'get_session_memory', description: 'Inspect the authoritative active memory. Required before answering a user question or dispute about what is currently stored. Returns only the compact active-mode state and bridge; audit history stays in the Memory Center.', parameters: {},
       output: { schema: { type: 'json' }, render: (_args, value) => [{ type: 'text', text: JSON.stringify(value) }] },
       execute: (_args, exec): Promise<JsonValue> => {
         if (!exec.agent) throw new Error('get_session_memory requires an Agent-backed session')
-        return Promise.resolve(this.get(exec.agent) as unknown as JsonValue)
+        return Promise.resolve(modelSessionMemorySnapshot(this.get(exec.agent)) as unknown as JsonValue)
       },
     }))
     const mutationParameters = {

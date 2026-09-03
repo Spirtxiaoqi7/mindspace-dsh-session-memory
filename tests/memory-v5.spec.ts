@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { emptySessionMemory, foldSessionMemory, migrateLegacyDocument, migrateV4Document } from '../src/memory/fold.ts'
-import { renderAssistantRequirements, renderBridge, renderSessionMemory, renderSessionMemoryContext } from '../src/memory/render.ts'
+import { modelSessionMemorySnapshot, renderAssistantRequirements, renderBridge, renderSessionMemory, renderSessionMemoryContext } from '../src/memory/render.ts'
 import { applyMemoryMutation } from '../src/memory/mutation.ts'
 import type { LegacySessionMemoryDocumentV1, LegacySessionMemoryDocumentV2, LegacySessionMemoryDocumentV3, LegacySessionMemoryDocumentV4 } from '../src/memory/domain.ts'
 
@@ -27,6 +27,15 @@ describe('V5 task-conditioned memory', () => {
       assistant_state: '白衬衫、黑色包臀裙和丝袜',
     }, [42])
     expect(next.assistantState).toBe('白衬衫、黑色包臀裙和丝袜')
+  })
+
+  it('gives the model a compact authoritative snapshot without audit history', () => {
+    const document = { ...emptySessionMemory(), chat: { ...emptySessionMemory().chat, assistantState: '白衬衫' } }
+    const snapshot = modelSessionMemorySnapshot({ document, memoryActivity: [{ id: 'large-audit', sourceSeqs: [], operation: 'replace', section: 'assistantState', mode: 'chat', before: '', after: '白衬衫', reason: 'test', at: 1 }] })
+    expect(snapshot.activeMode).toBe('chat')
+    expect(snapshot.memory.assistantState).toBe('白衬衫')
+    expect(snapshot).not.toHaveProperty('memoryActivity')
+    expect(snapshot).not.toHaveProperty('work')
   })
 
   it('separates AI requirements from ordinary memory in both modes', () => {

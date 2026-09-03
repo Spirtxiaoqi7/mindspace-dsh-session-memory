@@ -24,6 +24,8 @@ Model operations are exposed through `route_session_memory`, `get_session_memory
 
 Explicit user-confirmed changes to people, relationships, stable preferences, AI instructions, or the AI's current state are written in the same turn. Current Chat appearance and Work role/state use dedicated one-call actions; ordinary small talk and momentary actions remain outside long-term memory.
 
+When the user asks about or disputes stored state, the model must inspect the authoritative active-memory snapshot before answering. The inspection tool omits the potentially large audit history, which remains available in the Memory Center.
+
 Memory remains session-isolated under `DSH_HOME/mindspace-session-memory/v1` and does not rewrite canonical conversation JSONL. Existing V1–V4 business data migrates into Chat without being copied into Work. Session-scoped context compaction reuses DSH's stock engine and `/compact` command. The Memory Center shows the selected model's effective pressure, trigger line, retained tail, and latest result; policy changes can be applied without saving unrelated memory fields.
 
 ## Install
