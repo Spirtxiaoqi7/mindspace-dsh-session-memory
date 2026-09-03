@@ -82,6 +82,24 @@ export interface ContextCompactionPolicy {
   readonly updatedAt: number
 }
 
+export interface ContextCompactionStatus {
+  readonly providerAvailable: boolean
+  readonly provider: string
+  readonly model: string
+  readonly contextWindow: number | null
+  readonly estimatedTokens: number
+  readonly thresholdTokens: number | null
+  readonly effectiveRetainTokens: number | null
+  readonly utilizationRatio: number | null
+  readonly state: 'disabled' | 'unavailable' | 'waiting' | 'due'
+  readonly lastCompaction: {
+    readonly kind: 'automatic' | 'manual'
+    readonly status: 'completed' | 'failed' | 'running'
+    readonly at: number
+    readonly error: string
+  } | null
+}
+
 export interface SessionMemoryView {
   readonly document: SessionMemoryDocument
   readonly memoryActivity: readonly SessionMemoryActivity[]

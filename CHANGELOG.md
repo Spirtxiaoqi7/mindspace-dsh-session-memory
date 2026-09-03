@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.6.4
+
+- Added an idle-turn threshold enforcer for DSH Web compositions that keep the standing-preset provider private: it measures the real session pressure and invokes the stock `/compact` command once after a completed turn.
+- Applying a lower threshold to an already-idle conversation now performs the same check immediately.
+
+## 0.6.3
+
+- Accept the production DSH compaction service when its optional model-policy table is omitted, while preserving every provider-owned setting during each session-local policy overlay.
+
+## 0.6.2
+
+- Restored the stock `/compact` manual action that was accidentally removed from the V5 Memory Center.
+- Added live compaction diagnostics for the selected conversation: estimated pressure, model context capacity, actual trigger budget, capacity-safe retained tail, and the latest automatic/manual result.
+- Split compaction policy application from the full memory save so compression controls take effect immediately and report transport failures.
+- Restored the summary token limit control and clarified that automatic pressure checks run before model steps.
+
 ## 0.6.1
 
 - Split one stable user/AI relationship into task-conditioned Chat and Work memory faces without changing tools or permissions.

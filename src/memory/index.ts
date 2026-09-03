@@ -14,10 +14,10 @@ import type { JsonValue } from '@deepseek-ai/dsh-session'
 import { Remote, TypertRemoteService } from '@deepseek-ai/dsh-typert-protocol'
 import { TYPERT } from '../generated/typert.host.js'
 import { normalizeCompactionPolicy, normalizeSessionMemoryDocument } from './fold.ts'
-import { installSessionCompactionPolicyBridge } from './compaction-bridge.ts'
+import { installAutomaticCompactionFallback, installSessionCompactionPolicyBridge, readSessionCompactionStatus } from './compaction-bridge.ts'
 import { SessionMemorySidecar } from './sidecar.ts'
 import { renderAssistantRequirements, renderBridge, renderSessionMemory, renderSessionMemoryContext } from './render.ts'
-import type { BridgePendingWrite, ContextCompactionPolicy, ReplaceSessionMemoryRequest, SessionMemoryActivity, SessionMemoryDocument, SessionMemoryFailure, SessionMemoryItem, SessionMemoryMode, SessionMemoryMutationResult, SessionMemorySection, SessionMemoryView, SessionModeMemory, SessionPerson } from './types.ts'
+import type { BridgePendingWrite, ContextCompactionPolicy, ContextCompactionStatus, ReplaceSessionMemoryRequest, SessionMemoryActivity, SessionMemoryDocument, SessionMemoryFailure, SessionMemoryItem, SessionMemoryMode, SessionMemoryMutationResult, SessionMemorySection, SessionMemoryView, SessionModeMemory, SessionPerson } from './types.ts'
 
 export type * from './types.ts'
 export * from './domain.ts'
@@ -167,12 +167,13 @@ function instruction(args: MutationArgs): string {
 }
 
 export class SessionMemoryService extends TypertRemoteService {
-  static inject = ['agents', 'sessions', 'tools', 'systemPrompt', 'typert']
+  static inject = ['agents', 'sessions', 'tools', 'systemPrompt', 'typert', 'commands']
   static Config: z<Config> = z.object({ maxTextBytes: z.number().step(1).min(1).default(4096), maxItemsPerSection: z.number().step(1).min(1).max(MAX_MEMORY_CARDS).default(MAX_MEMORY_CARDS), maxProfileCharacters: z.number().step(1).min(1).default(DEFAULT_PROFILE_CHARACTERS) })
   private readonly resolved: ResolvedConfig
   private readonly installedAgents = new WeakSet<Agent>()
   private readonly modelReadState = new Map<string, { revision: number; turn: number }>()
   private readonly store = new SessionMemorySidecar()
+  private readonly requestCompactionCheck: (agent: Agent) => void
 
   constructor(ctx: Context, config: Config = {}) {
     super(ctx, 'mindspaceSessionMemory'); ctx.typert.register(TYPERT)
@@ -180,6 +181,7 @@ export class SessionMemoryService extends TypertRemoteService {
     ctx.systemPrompt.section({ name: 'tool:session-memory', order: 113, text: MEMORY_TOOL_GUIDANCE })
     this.registerTools()
     installSessionCompactionPolicyBridge(ctx, agent => this.store.read(agent.session).compactionPolicy)
+    this.requestCompactionCheck = installAutomaticCompactionFallback(ctx, agent => this.store.read(agent.session).compactionPolicy)
     ctx.inject(['systemPrompt'], (promptCtx) => {
       for (const agent of ctx.agents.roots()) this.installPrompt(agent)
       promptCtx.on('agent/created', ({ agent }) => { if (ctx.agents.roots().includes(agent)) this.installPrompt(agent) })
@@ -189,8 +191,11 @@ export class SessionMemoryService extends TypertRemoteService {
   @Remote('get') get(agent: Agent): SessionMemoryView { this.assertLive(agent); return this.store.read(agent.session).view }
   @Remote('replace') async replace(agent: Agent, request: ReplaceSessionMemoryRequest): Promise<SessionMemoryMutationResult> { return this.commit(agent, request, []) }
   @Remote('getCompactionPolicy') getCompactionPolicy(agent: Agent): ContextCompactionPolicy { this.assertLive(agent); return normalizeCompactionPolicy(this.store.read(agent.session).compactionPolicy) }
+  @Remote('getCompactionStatus') async getCompactionStatus(agent: Agent): Promise<ContextCompactionStatus> {
+    this.assertLive(agent); return await readSessionCompactionStatus(agent, this.store.read(agent.session).compactionPolicy, this.ctx.get('commands') !== undefined)
+  }
   @Remote('setCompactionPolicy') async setCompactionPolicy(agent: Agent, policy: ContextCompactionPolicy): Promise<ContextCompactionPolicy> {
-    this.assertLive(agent); const next = { ...normalizeCompactionPolicy(policy), updatedAt: Date.now() }; return this.store.setPolicy(agent.session, next).compactionPolicy
+    this.assertLive(agent); const next = { ...normalizeCompactionPolicy(policy), updatedAt: Date.now() }; const saved = this.store.setPolicy(agent.session, next).compactionPolicy; this.requestCompactionCheck(agent); return saved
   }
 
   private async commit(agent: Agent, request: ReplaceSessionMemoryRequest, sourceSeqs: readonly number[]): Promise<SessionMemoryMutationResult> {

@@ -56,6 +56,19 @@ const _deepseek_ai_dsh_session_memory_governance_sessionMemory_replace_result$sc
     'code': z.union([z.literal("stale-revision"), z.literal("invalid-document"), z.literal("text-too-large")]).readonly(), 'message': z.string().readonly(),
   }).readonly(),
 })])
+const _mindspace_dsh_session_memory_sessionMemory_compactionStatus$schema = z.object({
+  'providerAvailable': z.boolean().readonly(), 'provider': z.string().readonly(), 'model': z.string().readonly(),
+  'contextWindow': z.union([z.literal(null), z.number()]).readonly(), 'estimatedTokens': z.number().readonly(),
+  'thresholdTokens': z.union([z.literal(null), z.number()]).readonly(),
+  'effectiveRetainTokens': z.union([z.literal(null), z.number()]).readonly(),
+  'utilizationRatio': z.union([z.literal(null), z.number()]).readonly(),
+  'state': z.union([z.literal("disabled"), z.literal("unavailable"), z.literal("waiting"), z.literal("due")]).readonly(),
+  'lastCompaction': z.union([z.literal(null), z.object({
+    'kind': z.union([z.literal("automatic"), z.literal("manual")]).readonly(),
+    'status': z.union([z.literal("completed"), z.literal("failed"), z.literal("running")]).readonly(),
+    'at': z.number().readonly(), 'error': z.string().readonly(),
+  }).readonly()]).readonly(),
+}).readonly()
 
 `
 

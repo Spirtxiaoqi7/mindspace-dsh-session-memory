@@ -25,10 +25,12 @@ export async function apply(ctx: ClientContext): Promise<void> {
   const t = ctx.locale.bind(ns) as SessionMemorySectionInjected['t']
   const remote = ctx.get('remote.mindspaceSessionMemory') as SessionMemorySectionInjected['remote']
   if (remote === undefined) throw new Error('mindspace-session-memory: Remote mount did not publish its namespace')
+  const commands = ctx.get('remote.commands') as SessionMemorySectionInjected['commands']
   ctx.slots.inject('settings.section', () => ctx.slots.register({
     name: 'settings.section', id: 'personalization', order: 20, label: () => t('nav'),
     inject: (): SessionMemorySectionInjected => ({
       remote,
+      commands,
       t,
     }),
   }, SessionMemorySection))

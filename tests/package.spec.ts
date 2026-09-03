@@ -7,7 +7,7 @@ const root = resolve(import.meta.dirname, '..')
 describe('installable DSH bundle', () => {
   it('declares one bundle patch and a web client', () => {
     const manifest = JSON.parse(readFileSync(resolve(root, 'package.json'), 'utf8'))
-    expect(manifest.version).toBe('0.6.1')
+    expect(manifest.version).toBe('0.6.4')
     for (const [name, range] of Object.entries(manifest.peerDependencies)) {
       if (name.startsWith('@deepseek-ai/dsh-')) expect(range).toBe('>=0.1.1-rc.2 <0.2.0')
     }

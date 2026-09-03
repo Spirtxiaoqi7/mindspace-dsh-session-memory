@@ -65,6 +65,10 @@
 .footer { display: flex; align-items: center; justify-content: flex-end; gap: 8px; padding: 4px 0 8px; }
 .footer span { margin-right: auto; color: var(--dsw-alias-label-tertiary); font-size: 12px; }
 .footer .primary { border-color: transparent; background: var(--dsw-alias-button-primary-fill); color: var(--dsw-alias-label-primary-foreground); }
+.compactionStatus { display: grid; gap: 4px; padding: 11px 12px; border: 1px solid color-mix(in srgb, var(--dsw-alias-button-primary-fill) 28%, var(--dsw-alias-border-l2)); border-radius: 10px; background: color-mix(in srgb, var(--dsw-alias-button-primary-fill) 6%, var(--dsw-alias-bg-secondary)); }
+.compactionStatus strong { font-size: 13px; color: var(--dsw-alias-label-primary); }
+.compactionStatus span { font-size: 12px; line-height: 1.5; color: var(--dsw-alias-label-secondary); overflow-wrap: anywhere; }
+.compactionActions { display: flex; flex-wrap: wrap; gap: 8px; }
 @media (max-width: 620px) {
   .twoColumn, .changePair { grid-template-columns: 1fr; }
   .cardTitle { gap: 10px; }

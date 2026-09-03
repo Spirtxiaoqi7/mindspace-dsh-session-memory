@@ -12,7 +12,7 @@ import type { Context } from '@deepseek-ai/cordis'
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import type { CompactionResult, CompactionTrigger } from '@deepseek-ai/dsh-compaction'
 import type { LlmCallConfig } from '@deepseek-ai/dsh-llm'
-import type { ContextCompactionPolicy } from './types.ts'
+import type { ContextCompactionPolicy, ContextCompactionStatus } from './types.ts'
 
 type Target = Pick<LlmCallConfig, 'provider' | 'model'>
 
@@ -30,7 +30,7 @@ type ProviderConfig = {
   readonly retainRatio?: number
   readonly retainTokens?: number
   readonly maxTokens: number
-  readonly modelPolicies: readonly CompactPolicy[]
+  readonly modelPolicies?: readonly CompactPolicy[]
   readonly [key: string]: unknown
 }
 
@@ -47,7 +47,6 @@ function isMutableProvider(value: unknown): value is MutableCompactionProvider {
   return typeof candidate.compactIfNeeded === 'function'
     && typeof candidate.compactNow === 'function'
     && candidate.config !== null && typeof candidate.config === 'object'
-    && Array.isArray(candidate.config.modelPolicies)
 }
 
 function routedTarget(agent: Agent): Target | undefined {
@@ -60,6 +59,128 @@ function routedTarget(agent: Agent): Target | undefined {
   return { provider: agent.options.provider, model: agent.options.model }
 }
 
+type CommandsRuntime = {
+  execute(agent: Agent, line: string, images: readonly never[], signal: AbortSignal): Promise<{
+    readonly commandId: string
+    readonly result: { readonly kind: 'success' | 'error'; readonly text?: string }
+  } | undefined>
+}
+
+const automaticCommandIds = new WeakMap<object, Set<string>>()
+
+/** Read the effective stock-engine pressure state without changing the session. */
+export async function readSessionCompactionStatus(
+  agent: Agent,
+  policy: ContextCompactionPolicy,
+  commandFallbackAvailable = false,
+): Promise<ContextCompactionStatus> {
+  const provider = agent.ctx.get('compaction')
+  const target = routedTarget(agent)
+  const meter = agent.ctx.get('tokenMeter') as {
+    measure(session: Agent['session']): { readonly totalTokens: number }
+  } | undefined
+  const estimatedTokens = meter?.measure(agent.session).totalTokens ?? 0
+  let contextWindow: number | null = null
+  if (target !== undefined) {
+    const llm = agent.ctx.get('llm') as {
+      resolveModelInfo(provider: string, model: string): Promise<{
+        readonly context?: { readonly contextWindow: number }
+      }>
+    } | undefined
+    try {
+      contextWindow = (await llm?.resolveModelInfo(target.provider, target.model))?.context?.contextWindow ?? null
+    } catch {
+      contextWindow = null
+    }
+  }
+  const thresholdTokens = contextWindow === null ? null : Math.floor(contextWindow * policy.thresholdRatio)
+  const safeRetainRatio = Math.min(0.16, policy.thresholdRatio / 2)
+  const effectiveRetainTokens = contextWindow === null
+    ? null
+    : Math.min(policy.retainTokens, Math.floor(contextWindow * safeRetainRatio))
+  const utilizationRatio = contextWindow === null ? null : estimatedTokens / contextWindow
+
+  const starts = agent.session.events.filter(event => event.type === 'compaction/start') as ReadonlyArray<{
+    readonly time: number
+    readonly data: { readonly compactionId: string; readonly sourceCommandId?: string }
+  }>
+  const start = starts.at(-1)
+  let lastCompaction: ContextCompactionStatus['lastCompaction'] = null
+  if (start !== undefined) {
+    const end = agent.session.events.findLast(event => (
+      event.type === 'compaction/end'
+      && (event as { readonly data: { readonly compactionId: string } }).data.compactionId === start.data.compactionId
+    )) as { readonly time: number; readonly data: { readonly error?: string } } | undefined
+    lastCompaction = {
+      kind: start.data.sourceCommandId === undefined
+        || automaticCommandIds.get(agent.session)?.has(start.data.sourceCommandId) === true
+        ? 'automatic' : 'manual',
+      status: end === undefined ? 'running' : end.data.error === undefined ? 'completed' : 'failed',
+      at: end?.time ?? start.time,
+      error: end?.data.error ?? '',
+    }
+  }
+  const providerAvailable = isMutableProvider(provider) || commandFallbackAvailable
+  const state: ContextCompactionStatus['state'] = !policy.enabled
+    ? 'disabled'
+    : !providerAvailable || thresholdTokens === null
+      ? 'unavailable'
+      : estimatedTokens >= thresholdTokens ? 'due' : 'waiting'
+  return {
+    providerAvailable,
+    provider: target?.provider ?? '',
+    model: target?.model ?? '',
+    contextWindow,
+    estimatedTokens,
+    thresholdTokens,
+    effectiveRetainTokens,
+    utilizationRatio,
+    state,
+    lastCompaction,
+  }
+}
+
+/**
+ * Enforce the saved session threshold after a completed turn when the standing
+ * preset keeps its provider private. The stock `/compact` command remains the
+ * sole surface mutator and summarizer; this layer only decides when to invoke it.
+ */
+export function installAutomaticCompactionFallback(
+  ctx: Context,
+  policyFor: (agent: Agent) => ContextCompactionPolicy,
+): (agent: Agent) => void {
+  const commands = ctx.get('commands') as CommandsRuntime | undefined
+  if (commands === undefined) return () => undefined
+  const checkedTurnEnd = new WeakMap<object, number>()
+  const running = new WeakSet<object>()
+
+  const check = (agent: Agent, force = false): void => {
+    if (running.has(agent)) return
+    const turnEnd = agent.session.events.findLast(event => event.type === 'turn/end')
+    if (!force && (turnEnd === undefined || checkedTurnEnd.get(agent) === turnEnd.seq)) return
+    if (turnEnd !== undefined) checkedTurnEnd.set(agent, turnEnd.seq)
+    running.add(agent)
+    void (async () => {
+      try {
+        const policy = policyFor(agent)
+        const status = await readSessionCompactionStatus(agent, policy, true)
+        if (status.state !== 'due') return
+        const execution = await commands.execute(agent, '/compact', [], new AbortController().signal)
+        if (execution !== undefined) {
+          let ids = automaticCommandIds.get(agent.session)
+          if (ids === undefined) { ids = new Set<string>(); automaticCommandIds.set(agent.session, ids) }
+          ids.add(execution.commandId)
+        }
+      } finally {
+        running.delete(agent)
+      }
+    })()
+  }
+
+  ctx.on('agent/status', ({ agent, status }) => { if (status === 'idle') check(agent) })
+  return agent => check(agent, true)
+}
+
 /** Build an isolated stock-provider config with this session's explicit values. */
 export function withSessionCompactionPolicy(
   config: ProviderConfig,
@@ -67,6 +188,7 @@ export function withSessionCompactionPolicy(
   policy: ContextCompactionPolicy,
   contextWindow?: number,
 ): ProviderConfig {
+  const modelPolicies = Array.isArray(config.modelPolicies) ? config.modelPolicies : []
   // Absolute retention is model-capacity dependent.  A policy that was valid
   // on one route can otherwise disable compaction after a model switch.  Keep
   // at most half of the trigger budget; without catalog data, use the same
@@ -80,11 +202,11 @@ export function withSessionCompactionPolicy(
     thresholdRatio: policy.thresholdRatio,
     ...retention,
     maxTokens: policy.maxTokens,
-    modelPolicies: [...config.modelPolicies],
+    modelPolicies: [...modelPolicies],
   }
   if (target === undefined) return base
 
-  const existing = config.modelPolicies.find(item => (
+  const existing = modelPolicies.find(item => (
     item.provider === target.provider && item.model === target.model
   ))
   const override: CompactPolicy = {
@@ -101,7 +223,7 @@ export function withSessionCompactionPolicy(
     // row instead of appending a duplicate so the session policy wins.
     modelPolicies: [
       override,
-      ...config.modelPolicies.filter(item => (
+      ...modelPolicies.filter(item => (
         item.provider !== target.provider || item.model !== target.model
       )),
     ],

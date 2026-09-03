@@ -1,7 +1,7 @@
 import type { Context } from '@deepseek-ai/cordis'
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import { describe, expect, it, vi } from 'vitest'
-import { installSessionCompactionPolicyBridge, withSessionCompactionPolicy } from '../src/memory/compaction-bridge.ts'
+import { installAutomaticCompactionFallback, installSessionCompactionPolicyBridge, readSessionCompactionStatus, withSessionCompactionPolicy } from '../src/memory/compaction-bridge.ts'
 
 const policy = {
   enabled: true,
@@ -12,6 +12,56 @@ const policy = {
 } as const
 
 describe('DSH 0.1.x session compaction bridge', () => {
+  it('reports the real pressure budget and the latest automatic result', async () => {
+    const agent = {
+      ctx: { get: (name: string) => {
+        if (name === 'compaction') return { config: { modelPolicies: [] }, compactIfNeeded() {}, compactNow() {} }
+        if (name === 'tokenMeter') return { measure: () => ({ totalTokens: 20_000 }) }
+        if (name === 'llm') return { resolveModelInfo: async () => ({ context: { contextWindow: 98_304 } }) }
+        return undefined
+      } },
+      session: {
+        requestHeader: () => ({ config: { provider: 'deepseek', model: 'flash' } }),
+        events: [
+          { type: 'compaction/start', time: 10, data: { compactionId: 'auto-1', turn: 4 } },
+          { type: 'compaction/end', time: 20, data: { compactionId: 'auto-1', turn: 4 } },
+        ],
+      },
+      options: {},
+    } as unknown as Agent
+    const status = await readSessionCompactionStatus(agent, policy)
+    expect(status).toMatchObject({
+      providerAvailable: true,
+      contextWindow: 98_304,
+      estimatedTokens: 20_000,
+      thresholdTokens: 16_121,
+      effectiveRetainTokens: 8_060,
+      state: 'due',
+      lastCompaction: { kind: 'automatic', status: 'completed', at: 20, error: '' },
+    })
+  })
+
+  it('invokes stock /compact once after an over-threshold completed turn', async () => {
+    const callbacks = new Map<string, (...args: any[]) => unknown>()
+    const execute = vi.fn(async () => ({ commandId: 'cmd-auto-1', result: { kind: 'success' as const } }))
+    const ctx = {
+      get: (name: string) => name === 'commands' ? { execute } : undefined,
+      on: (name: string, callback: (...args: any[]) => unknown) => { callbacks.set(name, callback); return () => undefined },
+    } as unknown as Context
+    const agent = {
+      ctx: { get: (name: string) => name === 'tokenMeter' ? { measure: () => ({ totalTokens: 20_000 }) } : name === 'llm' ? { resolveModelInfo: async () => ({ context: { contextWindow: 98_304 } }) } : undefined },
+      session: { requestHeader: () => ({ config: { provider: 'deepseek', model: 'flash' } }), events: [{ type: 'turn/end', seq: 9 }] },
+      options: {},
+    } as unknown as Agent
+    installAutomaticCompactionFallback(ctx, () => policy)
+    callbacks.get('agent/status')?.({ agent, status: 'idle' })
+    await vi.waitFor(() => expect(execute).toHaveBeenCalledTimes(1))
+    callbacks.get('agent/status')?.({ agent, status: 'idle' })
+    await Promise.resolve()
+    expect(execute).toHaveBeenCalledWith(agent, '/compact', [], expect.any(AbortSignal))
+    expect(execute).toHaveBeenCalledTimes(1)
+  })
+
   it('applies one session policy without mutating the provider config', () => {
     const config = {
       thresholdRatio: 0.8,
@@ -47,6 +97,15 @@ describe('DSH 0.1.x session compaction bridge', () => {
       thresholdRatio: 0.8, retainRatio: 0.16, maxTokens: 8192, modelPolicies: [],
     }, undefined, policy)
     expect(result).toMatchObject({ thresholdRatio: 0.164, retainRatio: 0.082, retainTokens: undefined })
+  })
+
+  it('normalizes an omitted optional model policy table from the live provider', () => {
+    const result = withSessionCompactionPolicy({
+      thresholdRatio: 0.8, retainRatio: 0.16, maxTokens: 8192,
+    }, { provider: 'deepseek', model: 'flash' }, policy, 98_304)
+    expect(result.modelPolicies).toEqual([
+      expect.objectContaining({ provider: 'deepseek', model: 'flash', thresholdRatio: 0.164 }),
+    ])
   })
 
   it('adapts the preset-scoped provider reached through agent.ctx', async () => {
