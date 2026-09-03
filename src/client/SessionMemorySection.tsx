@@ -16,13 +16,17 @@ export interface SessionMemoryRemote {
   setCompactionPolicy(agentId: never, policy: ContextCompactionPolicy): Promise<RemoteResult<ContextCompactionPolicy>>
 }
 export interface CommandsRemote { execute(agentId: never, line: string, images: readonly never[]): Promise<RemoteResult<{ readonly result: { readonly kind: 'success' | 'error'; readonly text?: string } } | undefined>> }
+export interface MemoryInheritanceRuntime {
+  createBlankSession(sourceSessionId: string): Promise<string>
+  openSession(sessionId: string): void
+}
 export async function executeManualCompaction(commands: CommandsRemote, agentId: never): Promise<string> {
   const response = await commands.execute(agentId, '/compact', [])
   if (!response.ok) return response.error.message
   if (response.value === undefined) return '当前会话没有可用的 /compact 命令。'
   return response.value.result.text ?? (response.value.result.kind === 'success' ? '主动压缩已完成。' : '主动压缩未执行。')
 }
-export interface SessionMemorySectionInjected { remote: SessionMemoryRemote; commands?: CommandsRemote; t: (key: SessionMemoryKey) => string }
+export interface SessionMemorySectionInjected { remote: SessionMemoryRemote; commands?: CommandsRemote; inheritance?: MemoryInheritanceRuntime; t: (key: SessionMemoryKey) => string }
 export type SessionMemorySectionProps = PropsRuntime<'settings.section'> & Partial<SessionMemorySectionInjected>
 interface Draft { expectedRevision: number; activeMode: SessionMemoryMode; modeSource: 'user' | 'model' | 'migration'; modeReason: string; chat: SessionModeMemory; work: SessionModeMemory; bridge: SessionMemoryView['document']['bridge']; policy: ContextCompactionPolicy }
 
@@ -76,10 +80,10 @@ export function MemoryModeChip({ session, remote }: PropsRuntime<'conversation.i
 
 const tokens = (value: number | null): string => value === null ? '未知' : Math.round(value).toLocaleString('zh-CN')
 
-export function SessionMemorySection({ useSessions, useWorkspaces, remote, commands, t }: SessionMemorySectionProps) {
+export function SessionMemorySection({ useSessions, useWorkspaces, remote, commands, inheritance, t }: SessionMemorySectionProps) {
   if (!remote || !t) return null
   const sessions = useSessions(state => state); const workspaces = useWorkspaces(state => state)
-  const [selectedId, setSelectedId] = useState<string | undefined>(sessions.current ?? sessions.ids[0]); const [view, setView] = useState<SessionMemoryView>(); const [draft, setDraft] = useState<Draft>(); const [compaction, setCompaction] = useState<ContextCompactionStatus>(); const [tab, setTab] = useState<SessionMemoryMode>('chat'); const [status, setStatus] = useState('')
+  const [selectedId, setSelectedId] = useState<string | undefined>(sessions.current ?? sessions.ids[0]); const [view, setView] = useState<SessionMemoryView>(); const [draft, setDraft] = useState<Draft>(); const [compaction, setCompaction] = useState<ContextCompactionStatus>(); const [tab, setTab] = useState<SessionMemoryMode>('chat'); const [status, setStatus] = useState(''); const [inheriting, setInheriting] = useState(false)
   const visible = useMemo(() => visibleSessionIds(sessions.ids, workspaces.items.flatMap(row => row.sessionIds), workspaces.archivedSessionIds, workspaces.baselinesReady), [sessions.ids, workspaces.items, workspaces.archivedSessionIds, workspaces.baselinesReady])
   const selected = visibleSessionSelection(selectedId, sessions.current, visible); const options = visible.map(id => sessions.byId[id]).filter(Boolean)
   const loadCompaction = async () => { if (!selected) return; const result = await remote.getCompactionStatus(selected as never); if (result.ok) setCompaction(result.value) }
@@ -88,6 +92,39 @@ export function SessionMemorySection({ useSessions, useWorkspaces, remote, comma
   if (!workspaces.baselinesReady) return <div className={css.section}>正在读取会话…</div>
   const applyPolicy = async () => { if (!draft || !selected) return; setStatus('正在应用压缩设置…'); const result = await remote.setCompactionPolicy(selected as never, draft.policy); if (!result.ok) { setStatus(result.error.message); return } setDraft({ ...draft, policy: result.value }); await loadCompaction(); setStatus('压缩设置已应用') }
   const save = async () => { if (!draft || !selected) return; setStatus('正在保存…'); const result = await remote.replace(selected as never, request(draft)); if (!result.ok || !result.value.ok) { setStatus(result.ok ? result.value.error.message : result.error.message); return } const policy = await remote.setCompactionPolicy(selected as never, draft.policy); if (!policy.ok) { setStatus(`记忆已保存；压缩设置失败：${policy.error.message}`); return } setView(result.value.value); setDraft({ ...draft, expectedRevision: result.value.value.document.revision, policy: policy.value }); await loadCompaction(); setStatus('已保存') }
+  const inheritSettings = async () => {
+    if (!draft || !selected || !inheritance || inheriting) return
+    setInheriting(true); setStatus('正在保存并创建设定继承会话…')
+    try {
+      const saved = await remote.replace(selected as never, request(draft))
+      if (!saved.ok || !saved.value.ok) { setStatus(saved.ok ? saved.value.error.message : saved.error.message); return }
+      const policy = await remote.setCompactionPolicy(selected as never, draft.policy)
+      if (!policy.ok) { setStatus(`记忆已保存；压缩设置失败：${policy.error.message}`); return }
+      const targetId = await inheritance.createBlankSession(selected)
+      const target = await remote.get(targetId as never)
+      if (!target.ok) { setStatus(`新会话已创建，但读取失败：${target.error.message}`); return }
+      const source = saved.value.value.document
+      const copied = await remote.replace(targetId as never, {
+        expectedRevision: target.value.document.revision,
+        activeMode: source.activeMode,
+        modeSource: source.modeSource,
+        modeReason: source.modeReason,
+        chat: source.chat,
+        work: source.work,
+        bridge: source.bridge,
+      })
+      if (!copied.ok || !copied.value.ok) { setStatus(`新会话已创建，但设定继承失败：${copied.ok ? copied.value.error.message : copied.error.message}`); return }
+      const copiedPolicy = await remote.setCompactionPolicy(targetId as never, policy.value)
+      if (!copiedPolicy.ok) { setStatus(`设定已继承；压缩设置继承失败：${copiedPolicy.error.message}`); return }
+      setStatus('设定已继承，正在打开新会话…')
+      setSelectedId(targetId); setView(undefined); setDraft(undefined)
+      inheritance.openSession(targetId)
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : String(error))
+    } finally {
+      setInheriting(false)
+    }
+  }
   return <div className={css.section}><header><h2>记忆中心</h2><p>同一个人、同一个 AI，按当前任务载入 Chat 或 Work。模式不限制工具，只隔离记忆与写入目标。</p></header><label className={css.sessionSelect}><span>会话</span><select value={selected} onChange={event => { setSelectedId(event.target.value); setView(undefined); setDraft(undefined) }}>{options.map(row => <option key={row!.id} value={row!.id}>{row!.displayTitle}</option>)}</select></label>
     {draft && <><div className={css.modeTabs}><button className={tab === 'chat' ? css.activeTab : ''} onClick={() => setTab('chat')}>Chat</button><button className={tab === 'work' ? css.activeTab : ''} onClick={() => setTab('work')}>Work</button><span>当前注入：{draft.activeMode === 'chat' ? 'Chat' : 'Work'} · {draft.modeSource === 'model' ? '模型判断' : draft.modeSource === 'user' ? '用户选择' : '迁移默认'}</span></div><ModeEditor mode={tab} value={draft[tab]} onChange={value => setDraft({ ...draft, [tab]: value })}/>
       <section className={css.card}><div className={css.cardTitle}><div><h3>中立桥接层</h3><p>只保存转场说明和跨域待写项，不保存两边的详细记忆。</p></div><span className={css.limitBadge}>{draft.bridge.pendingWrites.length} 待处理</span></div><label><span>转场说明（最多 300 字）</span><textarea rows={3} value={draft.bridge.transitionNote} onChange={event => setDraft({ ...draft, bridge: { ...draft.bridge, transitionNote: [...event.target.value].slice(0, 300).join('') } })}/></label>{draft.bridge.pendingWrites.map(row => <div className={css.pendingRow} key={row.id}><strong>{row.fromMode} → {row.targetMode}</strong><span>{row.instruction}</span></div>)}</section>
@@ -96,6 +133,6 @@ export function SessionMemorySection({ useSessions, useWorkspaces, remote, comma
         <div className={css.twoColumn}><label><span>达到上下文比例时触发 %</span><input type="number" min="5" max="80" step="0.1" value={Number((draft.policy.thresholdRatio * 100).toFixed(1))} onChange={event => setDraft({ ...draft, policy: { ...draft.policy, thresholdRatio: Number(event.target.value) / 100 } })}/></label><label><span>希望保留末尾原文 tokens</span><input type="number" min="4096" step="1024" value={draft.policy.retainTokens} onChange={event => setDraft({ ...draft, policy: { ...draft.policy, retainTokens: Math.max(4096, Number(event.target.value) || 4096) } })}/></label><label><span>摘要上限 tokens</span><input type="number" min="512" max="8192" step="256" value={draft.policy.maxTokens} onChange={event => setDraft({ ...draft, policy: { ...draft.policy, maxTokens: Math.min(8192, Math.max(512, Number(event.target.value) || 512)) } })}/></label></div>
         <div className={css.compactionActions}><button type="button" onClick={() => void applyPolicy()}>应用压缩设置</button><button type="button" disabled={commands === undefined} onClick={async () => { if (!commands || selected === undefined) return; setStatus('正在压缩当前会话…'); setStatus(await executeManualCompaction(commands, selected as never)); await loadCompaction() }}>立即压缩当前会话</button><button type="button" onClick={() => void loadCompaction()}>刷新状态</button></div>
       </section>
-      <footer className={css.footer}><span>{status || `修订 ${view?.document.revision ?? 0}`}</span><button onClick={() => void load()}>重新载入</button><button className={css.primary} onClick={() => void save()}>保存</button></footer></>}
+      <footer className={css.footer}><span>{status || `修订 ${view?.document.revision ?? 0}`}</span><button onClick={() => void load()}>重新载入</button><button className={css.inheritButton} disabled={!inheritance || inheriting} title="复制当前 Chat、Work、人物、AI 设定、长期记忆与桥接状态；不复制聊天记录" onClick={() => void inheritSettings()}>{inheriting ? '正在继承…' : '设定继承'}</button><button className={css.primary} onClick={() => void save()}>保存</button></footer></>}
   </div>
 }

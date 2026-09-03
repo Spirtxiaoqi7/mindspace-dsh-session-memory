@@ -7,7 +7,7 @@ const root = resolve(import.meta.dirname, '..')
 describe('installable DSH bundle', () => {
   it('declares one bundle patch and a web client', () => {
     const manifest = JSON.parse(readFileSync(resolve(root, 'package.json'), 'utf8'))
-    expect(manifest.version).toBe('0.6.8')
+    expect(manifest.version).toBe('0.6.10')
     for (const [name, range] of Object.entries(manifest.peerDependencies)) {
       if (name.startsWith('@deepseek-ai/dsh-')) expect(range).toBe('>=0.1.1-rc.2 <0.2.0')
     }
@@ -38,7 +38,7 @@ describe('installable DSH bundle', () => {
 
   it('mounts its isolated Remote once without waiting for itself', () => {
     const clientSource = readFileSync(resolve(root, 'src/client/index.ts'), 'utf8')
-    expect(clientSource).toContain("export const inject = ['slots', 'locale', 'remote']")
+    expect(clientSource).toContain("export const inject = ['slots', 'locale', 'remote', 'sessions', 'workspaces']")
     expect(clientSource).toContain('ctx.remote.$mount(sessionMemoryRemote)')
   })
 })

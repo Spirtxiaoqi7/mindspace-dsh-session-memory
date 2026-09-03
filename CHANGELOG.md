@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.6.10
+
+- Added a one-click **设定继承** action in Memory Center. It saves the current memory, creates a blank conversation in the same workspace, copies both Chat and Work faces plus the neutral bridge and compaction policy, then opens the new conversation without copying chat history.
+
 ## 0.6.8
 
 - Added dedicated compact tools for reading and writing the AI's current state.

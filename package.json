@@ -1,6 +1,6 @@
 {
   "name": "mindspace-dsh-session-memory",
-  "version": "0.6.8",
+  "version": "0.6.10",
   "description": "Task-conditioned Chat and Work session memory for DeepSeek Harness",
   "type": "module",
   "license": "MIT",

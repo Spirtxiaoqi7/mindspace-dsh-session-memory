@@ -65,6 +65,8 @@
 .footer { display: flex; align-items: center; justify-content: flex-end; gap: 8px; padding: 4px 0 8px; }
 .footer span { margin-right: auto; color: var(--dsw-alias-label-tertiary); font-size: 12px; }
 .footer .primary { border-color: transparent; background: var(--dsw-alias-button-primary-fill); color: var(--dsw-alias-label-primary-foreground); }
+.footer .inheritButton { border-color: color-mix(in srgb, #8b6bd6 52%, var(--dsw-alias-border-l2)); background: color-mix(in srgb, #8b6bd6 10%, var(--dsw-alias-bg-base)); }
+.footer .inheritButton:hover { background: color-mix(in srgb, #8b6bd6 18%, var(--dsw-alias-bg-base)); }
 .compactionStatus { display: grid; gap: 4px; padding: 11px 12px; border: 1px solid color-mix(in srgb, var(--dsw-alias-button-primary-fill) 28%, var(--dsw-alias-border-l2)); border-radius: 10px; background: color-mix(in srgb, var(--dsw-alias-button-primary-fill) 6%, var(--dsw-alias-bg-secondary)); }
 .compactionStatus strong { font-size: 13px; color: var(--dsw-alias-label-primary); }
 .compactionStatus span { font-size: 12px; line-height: 1.5; color: var(--dsw-alias-label-secondary); overflow-wrap: anywhere; }
