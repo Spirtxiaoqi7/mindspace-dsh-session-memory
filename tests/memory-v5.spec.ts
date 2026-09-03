@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { emptySessionMemory, foldSessionMemory, migrateLegacyDocument, migrateV4Document } from '../src/memory/fold.ts'
 import { renderAssistantRequirements, renderBridge, renderSessionMemory, renderSessionMemoryContext } from '../src/memory/render.ts'
+import { applyMemoryMutation } from '../src/memory/mutation.ts'
 import type { LegacySessionMemoryDocumentV1, LegacySessionMemoryDocumentV2, LegacySessionMemoryDocumentV3, LegacySessionMemoryDocumentV4 } from '../src/memory/domain.ts'
 
 describe('V5 task-conditioned memory', () => {
@@ -14,8 +15,18 @@ describe('V5 task-conditioned memory', () => {
     const text = renderSessionMemoryContext({ document, memoryActivity: [] })
     expect(text).toContain('Chat（日常）')
     expect(text).toContain('不限制任何工具或行为')
+    expect(text).toContain('必须在本轮调用 update_session_memory')
     expect(text).toContain('一起看过海')
     expect(text).not.toContain('喜欢 Python')
+  })
+
+  it('makes a confirmed current outfit a direct one-call memory action', () => {
+    const current = emptySessionMemory().chat
+    const next = applyMemoryMutation(current, {
+      action: 'set_assistant_state',
+      assistant_state: '白衬衫、黑色包臀裙和丝袜',
+    }, [42])
+    expect(next.assistantState).toBe('白衬衫、黑色包臀裙和丝袜')
   })
 
   it('separates AI requirements from ordinary memory in both modes', () => {

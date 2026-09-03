@@ -18,6 +18,8 @@
 
 模型通过 `route_session_memory`、`get_session_memory`、`update_session_memory` 和 `resolve_pending_memory` 完成路由、读取、暂存与消费。输入框模式按钮和设置中的记忆中心使用同一套侧车与 Remote，没有另造一套状态。
 
+用户明确确认的人物、关系、稳定偏好、对 AI 的要求或 AI 当前状态，会在同一轮写入。Chat 当前衣着与 Work 当前角色/状态使用专门的一次调用动作；普通闲聊和瞬时动作不进入长期记忆。
+
 数据按会话隔离，保存在 `DSH_HOME/mindspace-session-memory/v1`，不改写 DSH 原始会话 JSONL。V1–V4 的既有业务数据首次读取时完整迁入 Chat，Work 保持空白，避免凭空复制工作身份。会话级上下文压缩复用 DSH 原生压缩器与 `/compact` 命令；记忆中心会显示当前模型的估算用量、实际触发线、实际保留量和最近结果，压缩设置可单独应用。
 
 ## 配置

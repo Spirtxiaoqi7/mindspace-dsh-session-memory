@@ -22,6 +22,8 @@ After entering the target face, the model reviews each pending item, consolidate
 
 Model operations are exposed through `route_session_memory`, `get_session_memory`, `update_session_memory`, and `resolve_pending_memory`. The Memory Center uses the same sidecar and Remote rather than maintaining a second implementation.
 
+Explicit user-confirmed changes to people, relationships, stable preferences, AI instructions, or the AI's current state are written in the same turn. Current Chat appearance and Work role/state use dedicated one-call actions; ordinary small talk and momentary actions remain outside long-term memory.
+
 Memory remains session-isolated under `DSH_HOME/mindspace-session-memory/v1` and does not rewrite canonical conversation JSONL. Existing V1–V4 business data migrates into Chat without being copied into Work. Session-scoped context compaction reuses DSH's stock engine and `/compact` command. The Memory Center shows the selected model's effective pressure, trigger line, retained tail, and latest result; policy changes can be applied without saving unrelated memory fields.
 
 ## Install

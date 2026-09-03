@@ -16,6 +16,7 @@ import { TYPERT } from '../generated/typert.host.js'
 import { normalizeCompactionPolicy, normalizeSessionMemoryDocument } from './fold.ts'
 import { installAutomaticCompactionFallback, installSessionCompactionPolicyBridge, readSessionCompactionStatus } from './compaction-bridge.ts'
 import { SessionMemorySidecar } from './sidecar.ts'
+import { applyMemoryMutation, mutationInstruction, type MutationArgs } from './mutation.ts'
 import { renderAssistantRequirements, renderBridge, renderSessionMemory, renderSessionMemoryContext } from './render.ts'
 import type { BridgePendingWrite, ContextCompactionPolicy, ContextCompactionStatus, ReplaceSessionMemoryRequest, SessionMemoryActivity, SessionMemoryDocument, SessionMemoryFailure, SessionMemoryItem, SessionMemoryMode, SessionMemoryMutationResult, SessionMemorySection, SessionMemoryView, SessionModeMemory, SessionPerson } from './types.ts'
 
@@ -33,30 +34,17 @@ const MAX_PEOPLE = 5
 const MAX_MEMORY_CARDS = 3
 const DEFAULT_PROFILE_CHARACTERS = 300
 
-const MEMORY_TOOL_GUIDANCE = [
+export const MEMORY_TOOL_GUIDANCE = [
   'Session memory has two task-conditioned faces for the same user and AI: Chat for daily life, relationships, preferences and appearance; Work for projects, engineering and collaboration.',
   'These modes never restrict tools or capabilities. At the start of a turn, keep the current mode when it fits; call route_session_memory only when the latest user intent clearly belongs to the other mode.',
   'A user-selected mode is strong evidence, not an absolute lock. A mixed message may switch once its main intent changes. The route tool returns the newly relevant memory and pending bridge writes.',
-  'Before writing, call get_session_memory. Direct writes may only target the active mode. A fact for the other mode must be staged with update_session_memory target_mode; do not place it in the current mode.',
+  'Memory write duty: when the user explicitly establishes, confirms, corrects, or changes a person, relationship, name, durable preference, instruction for the AI, long-lived fact, or the AI current state, call update_session_memory in that same turn. The user does not need to say "remember". Resolve confirmations such as "this outfit", "keep it this way", or "do this from now on" from the immediately preceding context.',
+  'Use set_assistant_state for current Chat appearance/outfit or current Work role/state, and set_assistant_setting for the stable AI definition. Do not merely enact a confirmed state in prose: persist it as part of completing the request.',
+  'Ordinary small talk, momentary actions, one-off tasks, and unconfirmed guesses are not memory. Direct writes are atomic and do not require a preceding read; use get_session_memory only when the existing state or ids are genuinely needed.',
+  'Direct writes may only target the active mode. A fact for the other mode must be staged with update_session_memory target_mode; do not place it in the current mode.',
   'After entering a mode, review pending writes targeted there. Use resolve_pending_memory to apply a consolidated update or explicitly skip it; only then is that pending item cleared.',
   'The bridge contains only a short transition note and pending write instructions. Never use it as a second long-term memory. Never invent people or facts.',
 ].join(' ')
-
-type MemoryAction = 'add_person' | 'update_person' | 'remove_person' | 'upsert_item' | 'remove_item'
-interface MutationArgs {
-  action: MemoryAction
-  section?: 'assistantRequirements' | 'memories'
-  category?: string
-  text?: string
-  item_id?: string
-  person_id?: string
-  person_name?: string
-  information?: string
-  preference?: string
-  relationship?: string
-  assistant_setting?: string
-  assistant_state?: string
-}
 
 function failure(code: SessionMemoryFailure['code'], message: string): SessionMemoryMutationResult { return { ok: false, error: { code, message } } }
 function validateText(value: string, field: string, maxBytes: number, allowBlank = false): SessionMemoryFailure | undefined {
@@ -126,52 +114,11 @@ function currentRequest(document: SessionMemoryDocument): ReplaceSessionMemoryRe
   return { expectedRevision: document.revision, activeMode: document.activeMode, modeSource: document.modeSource, modeReason: document.modeReason, chat: document.chat, work: document.work, bridge: document.bridge }
 }
 
-function upsertCard(entries: readonly SessionMemoryItem[], args: MutationArgs, sourceSeqs: readonly number[]): SessionMemoryItem[] {
-  if (!args.text?.trim() || !args.category?.trim()) throw new Error('category and text are required')
-  const next = [...entries]
-  const at = args.item_id ? next.findIndex(item => item.id === args.item_id) : next.findIndex(item => item.category.toLocaleLowerCase() === args.category!.trim().toLocaleLowerCase())
-  const value: SessionMemoryItem = { id: next[at]?.id ?? `memory-${randomUUID()}`, category: args.category.trim(), text: args.text.trim(), source: 'user', evidenceSeqs: [...new Set([...(next[at]?.evidenceSeqs ?? []), ...sourceSeqs])] }
-  if (at >= 0) next.splice(at, 1, value)
-  else if (next.length < MAX_MEMORY_CARDS) next.push(value)
-  else next.splice(next.reduce((best, item, index) => item.text.length < next[best]!.text.length ? index : best, 0), 1, value)
-  return next
-}
-
-function applyMutation(mode: SessionModeMemory, args: MutationArgs, sourceSeqs: readonly number[]): SessionModeMemory {
-  if (args.assistant_setting !== undefined || args.assistant_state !== undefined) return { ...mode, assistantSetting: args.assistant_setting ?? mode.assistantSetting, assistantState: args.assistant_state ?? mode.assistantState }
-  if (args.action === 'add_person') {
-    if (!args.person_name?.trim()) throw new Error('person_name is required')
-    if (mode.people.length >= MAX_PEOPLE) throw new Error(`people already has ${MAX_PEOPLE} entries`)
-    return { ...mode, people: [...mode.people, { id: `person-${randomUUID()}`, name: args.person_name.trim(), information: args.information ?? '', preference: args.preference ?? '', relationship: args.relationship ?? '', source: 'user', evidenceSeqs: [...sourceSeqs], updatedAt: Date.now() }] }
-  }
-  if (args.action === 'update_person' || args.action === 'remove_person') {
-    if (!args.person_id) throw new Error('person_id is required')
-    const people = [...mode.people]; const at = people.findIndex(person => person.id === args.person_id)
-    if (at < 0) throw new Error(`person not found: ${args.person_id}`)
-    if (args.action === 'remove_person') people.splice(at, 1)
-    else { const old = people[at]!; people.splice(at, 1, { ...old, name: args.person_name ?? old.name, information: args.information ?? old.information, preference: args.preference ?? old.preference, relationship: args.relationship ?? old.relationship, source: 'user', evidenceSeqs: [...new Set([...old.evidenceSeqs, ...sourceSeqs])], updatedAt: Date.now() }) }
-    return { ...mode, people }
-  }
-  if (!args.section) throw new Error('section is required')
-  if (args.action === 'upsert_item') return { ...mode, [args.section]: upsertCard(mode[args.section], args, sourceSeqs) }
-  const entries = [...mode[args.section]]; const at = args.item_id ? entries.findIndex(item => item.id === args.item_id) : entries.findIndex(item => item.category.toLocaleLowerCase() === args.category?.trim().toLocaleLowerCase())
-  if (at < 0) throw new Error('matching item not found'); entries.splice(at, 1)
-  return { ...mode, [args.section]: entries }
-}
-
-function instruction(args: MutationArgs): string {
-  if (args.assistant_setting !== undefined) return `更新 AI 设定：${args.assistant_setting}`
-  if (args.assistant_state !== undefined) return `更新 AI 当前状态：${args.assistant_state}`
-  if (args.action.includes('person')) return `${args.action}：${args.person_name ?? args.person_id ?? ''}；信息=${args.information ?? ''}；偏好=${args.preference ?? ''}；关系=${args.relationship ?? ''}`
-  return `${args.action} ${args.section ?? ''} / ${args.category ?? args.item_id ?? ''}：${args.text ?? ''}`
-}
-
 export class SessionMemoryService extends TypertRemoteService {
   static inject = ['agents', 'sessions', 'tools', 'systemPrompt', 'typert', 'commands']
   static Config: z<Config> = z.object({ maxTextBytes: z.number().step(1).min(1).default(4096), maxItemsPerSection: z.number().step(1).min(1).max(MAX_MEMORY_CARDS).default(MAX_MEMORY_CARDS), maxProfileCharacters: z.number().step(1).min(1).default(DEFAULT_PROFILE_CHARACTERS) })
   private readonly resolved: ResolvedConfig
   private readonly installedAgents = new WeakSet<Agent>()
-  private readonly modelReadState = new Map<string, { revision: number; turn: number }>()
   private readonly store = new SessionMemorySidecar()
   private readonly requestCompactionCheck: (agent: Agent) => void
 
@@ -211,8 +158,6 @@ export class SessionMemoryService extends TypertRemoteService {
 
   private assertLive(agent: Agent): void { if (this.ctx.agents.get(agent.id) !== agent) throw new Error(`session-memory: agent ${agent.id} is not live`) }
   private latestEvidence(agent: Agent): number[] { const event = agent.session.events.findLast(row => row.type === 'user/message' && row.data.source.kind === 'user'); return event ? [event.seq] : [] }
-  private currentTurn(agent: Agent): number { return agent.session.events.findLast(event => event.type === 'turn/start')?.data.turn ?? 0 }
-
   private registerTools(): void {
     this.ctx.tools.register(defineTool({
       name: 'route_session_memory', description: 'Switch Chat/Work memory only when the latest intent clearly belongs to the other mode. This does not change tools or permissions. Returns the selected mode memory and pending bridge writes.',
@@ -231,32 +176,31 @@ export class SessionMemoryService extends TypertRemoteService {
       },
     }))
     this.ctx.tools.register(defineTool({
-      name: 'get_session_memory', description: 'Read both memory faces, active mode, neutral bridge, and activity before a memory write.', parameters: {},
+      name: 'get_session_memory', description: 'Read both memory faces, active mode, neutral bridge, and activity when existing details or ids are needed. Ordinary atomic writes do not require this first.', parameters: {},
       output: { schema: { type: 'json' }, render: (_args, value) => [{ type: 'text', text: JSON.stringify(value) }] },
       execute: (_args, exec): Promise<JsonValue> => {
         if (!exec.agent) throw new Error('get_session_memory requires an Agent-backed session')
-        const view = this.get(exec.agent); this.modelReadState.set(String(exec.agent.id), { revision: view.document.revision, turn: this.currentTurn(exec.agent) }); return Promise.resolve(view as unknown as JsonValue)
+        return Promise.resolve(this.get(exec.agent) as unknown as JsonValue)
       },
     }))
     const mutationParameters = {
-      target_mode: { type: 'string', required: true, enum: ['chat', 'work'] }, action: { type: 'string', required: true, enum: ['add_person', 'update_person', 'remove_person', 'upsert_item', 'remove_item'] },
+      target_mode: { type: 'string', required: true, enum: ['chat', 'work'] }, action: { type: 'string', required: true, enum: ['set_assistant_setting', 'set_assistant_state', 'add_person', 'update_person', 'remove_person', 'upsert_item', 'remove_item'] },
       section: { type: 'string', enum: ['assistantRequirements', 'memories'] }, category: { type: 'string' }, text: { type: 'string' }, item_id: { type: 'string' }, person_id: { type: 'string' }, person_name: { type: 'string' }, information: { type: 'string' }, preference: { type: 'string' }, relationship: { type: 'string' }, assistant_setting: { type: 'string' }, assistant_state: { type: 'string' },
     } as const
     this.ctx.tools.register(defineTool({
-      name: 'update_session_memory', description: 'Write the active mode, or stage a cross-mode write in the neutral bridge. Call get_session_memory first.', parameters: mutationParameters,
+      name: 'update_session_memory', description: 'Persist an explicit memory change now in one atomic call, or stage it for the other mode. Use set_assistant_state whenever the user confirms or changes the AI current Chat outfit/appearance or Work role/state; acting it out only in prose is incomplete. A prior get_session_memory call is optional.', parameters: mutationParameters,
       output: { schema: { type: 'json' }, render: (_args, value) => [{ type: 'text', text: JSON.stringify(value) }] },
       execute: async (raw, exec): Promise<JsonValue> => {
         if (!exec.agent) throw new Error('update_session_memory requires an Agent-backed session')
-        const current = this.get(exec.agent).document; const read = this.modelReadState.get(String(exec.agent.id))
-        if (read?.revision !== current.revision || read.turn !== this.currentTurn(exec.agent)) throw new Error('Call get_session_memory immediately before update_session_memory.')
+        const current = this.get(exec.agent).document
         const args = raw as unknown as MutationArgs & { target_mode: SessionMemoryMode }; const sourceSeqs = this.latestEvidence(exec.agent); const request = currentRequest(current)
         let next: ReplaceSessionMemoryRequest
-        if (args.target_mode === current.activeMode) next = { ...request, [args.target_mode]: applyMutation(current[args.target_mode], args, sourceSeqs) }
+        if (args.target_mode === current.activeMode) next = { ...request, [args.target_mode]: applyMemoryMutation(current[args.target_mode], args, sourceSeqs) }
         else {
-          const pending: BridgePendingWrite = { id: `pending-${randomUUID()}`, fromMode: current.activeMode, targetMode: args.target_mode, instruction: instruction(args), suggestedAction: args.action, ...(args.section ? { suggestedSection: args.section } : {}), sourceSeqs, createdAt: Date.now() }
+          const pending: BridgePendingWrite = { id: `pending-${randomUUID()}`, fromMode: current.activeMode, targetMode: args.target_mode, instruction: mutationInstruction(args), suggestedAction: args.action, ...(args.section ? { suggestedSection: args.section } : {}), sourceSeqs, createdAt: Date.now() }
           next = { ...request, bridge: { ...request.bridge, pendingWrites: [...request.bridge.pendingWrites, pending] } }
         }
-        const result = await this.commit(exec.agent, next, sourceSeqs); this.modelReadState.delete(String(exec.agent.id)); if (!result.ok) throw new Error(result.error.message); return result.value as unknown as JsonValue
+        const result = await this.commit(exec.agent, next, sourceSeqs); if (!result.ok) throw new Error(result.error.message); return result.value as unknown as JsonValue
       },
     }))
     this.ctx.tools.register(defineTool({
@@ -270,7 +214,7 @@ export class SessionMemoryService extends TypertRemoteService {
         if (!pending) throw new Error('pending write not found')
         if (pending.targetMode !== view.document.activeMode || args.target_mode !== pending.targetMode) throw new Error('Switch to the pending write target mode first')
         const sourceSeqs = [...new Set([...pending.sourceSeqs, ...this.latestEvidence(exec.agent)])]; const request = currentRequest(view.document)
-        const target = args.resolution === 'apply' ? applyMutation(view.document[pending.targetMode], args, sourceSeqs) : view.document[pending.targetMode]
+        const target = args.resolution === 'apply' ? applyMemoryMutation(view.document[pending.targetMode], args, sourceSeqs) : view.document[pending.targetMode]
         const next = { ...request, [pending.targetMode]: target, bridge: { ...request.bridge, pendingWrites: request.bridge.pendingWrites.filter(item => item.id !== pending.id) } }
         const result = await this.commit(exec.agent, next, sourceSeqs); if (!result.ok) throw new Error(result.error.message); return result.value as unknown as JsonValue
       },

@@ -23,6 +23,7 @@ export function renderSessionMemoryContext(view: SessionMemoryView, mode = view.
   ].filter(Boolean).join('\n')).join('\n\n')
   return [
     `当前记忆模式：${mode === 'chat' ? 'Chat（日常）' : 'Work（工作）'}。这只是上下文状态，不限制任何工具或行为。`,
+    '记忆职责：用户明确确认或改变人物、关系、称呼、稳定偏好、对 AI 的规则、长期事实或 AI 当前状态时，必须在本轮调用 update_session_memory 落盘；“这身”“就这样”“以后照此”等确认应结合紧邻上下文解析。普通闲聊、一次性动作和未经确认的猜测不写入。',
     people ? `人物信息：\n${people}` : '',
     state.assistantSetting ? `AI 设定：${state.assistantSetting}` : '',
     state.assistantState ? `${mode === 'chat' ? 'AI 当前衣着与外观' : 'AI 当前工作状态'}：${state.assistantState}` : '',

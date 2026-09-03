@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.6.5
+
+- Made explicit, user-confirmed memory changes an in-turn model duty instead of an optional suggestion, including contextual confirmations such as “this outfit” and “keep it this way”.
+- Added first-class `set_assistant_state` and `set_assistant_setting` actions so current appearance and role changes no longer require a misleading generic action.
+- Made ordinary memory mutations atomic: the active memory is read server-side, while `get_session_memory` remains available for genuinely complex edits rather than being a mandatory extra tool call.
+
 ## 0.6.4
 
 - Added an idle-turn threshold enforcer for DSH Web compositions that keep the standing-preset provider private: it measures the real session pressure and invokes the stock `/compact` command once after a completed turn.

@@ -36,7 +36,7 @@ export interface BridgePendingWrite {
   readonly fromMode: SessionMemoryMode
   readonly targetMode: SessionMemoryMode
   readonly instruction: string
-  readonly suggestedAction: 'add_person' | 'update_person' | 'remove_person' | 'upsert_item' | 'remove_item'
+  readonly suggestedAction: 'set_assistant_setting' | 'set_assistant_state' | 'add_person' | 'update_person' | 'remove_person' | 'upsert_item' | 'remove_item'
   readonly suggestedSection?: 'assistantRequirements' | 'memories'
   readonly sourceSeqs: readonly number[]
   readonly createdAt: number
