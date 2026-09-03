@@ -18,10 +18,12 @@ import { installAutomaticCompactionFallback, installSessionCompactionPolicyBridg
 import { SessionMemorySidecar } from './sidecar.ts'
 import { applyMemoryMutation, mutationInstruction, type MutationArgs } from './mutation.ts'
 import { modelSessionMemorySnapshot, renderAssistantRequirements, renderBridge, renderSessionMemory, renderSessionMemoryContext } from './render.ts'
+import { ASSISTANT_STATE_REMINDER, needsAssistantStateReminder } from './state-reminder.ts'
 import type { BridgePendingWrite, ContextCompactionPolicy, ContextCompactionStatus, ReplaceSessionMemoryRequest, SessionMemoryActivity, SessionMemoryDocument, SessionMemoryFailure, SessionMemoryItem, SessionMemoryMode, SessionMemoryMutationResult, SessionMemorySection, SessionMemoryView, SessionModeMemory, SessionPerson } from './types.ts'
 
 export type * from './types.ts'
 export * from './domain.ts'
+export { needsAssistantStateReminder } from './state-reminder.ts'
 export { applySessionMemoryEvent, emptyModeMemory, emptySessionMemory, emptySessionMemoryFoldState, foldSessionMemory, migrateLegacyDocument, migrateV4Document, sessionMemoryView } from './fold.ts'
 export { renderAssistantRequirements, renderBridge, renderSessionMemory, renderSessionMemoryContext } from './render.ts'
 
@@ -39,9 +41,9 @@ export const MEMORY_TOOL_GUIDANCE = [
   'These modes never restrict tools or capabilities. At the start of a turn, keep the current mode when it fits; call route_session_memory only when the latest user intent clearly belongs to the other mode.',
   'A user-selected mode is strong evidence, not an absolute lock. A mixed message may switch once its main intent changes. The route tool returns the newly relevant memory and pending bridge writes.',
   'Memory write duty: when the user explicitly establishes, confirms, corrects, or changes a person, relationship, name, durable preference, instruction for the AI, long-lived fact, or the AI current state, call update_session_memory in that same turn. The user does not need to say "remember". Resolve confirmations such as "this outfit", "keep it this way", or "do this from now on" from the immediately preceding context.',
-  'Use set_assistant_state for current Chat appearance/outfit or current Work role/state, and set_assistant_setting for the stable AI definition. Do not merely enact a confirmed state in prose: persist it as part of completing the request.',
+  'For the AI current Chat appearance/outfit or current Work role/state, prefer the dedicated get_current_assistant_state and set_current_assistant_state tools. Use update_session_memory set_assistant_setting for the stable AI definition. Do not merely enact a confirmed state in prose: persist it as part of completing the request.',
   'Ordinary small talk, momentary actions, one-off tasks, and unconfirmed guesses are not memory. Direct writes are atomic and do not require a preceding read; use get_session_memory only when the existing state or ids are genuinely needed.',
-  'Verification duty: when the user asks what is currently remembered, says the claimed state is not visible, or disputes a remembered fact, call get_session_memory before answering. Treat the tool result as authoritative. If the field is empty or inconsistent, say so and persist a user-confirmed correction instead of claiming that prose already changed memory.',
+  'Verification duty: when the user asks what is currently remembered or disputes a general remembered fact, call get_session_memory before answering; for current AI appearance/outfit/state use get_current_assistant_state. Treat tool results as authoritative. If a field is empty or inconsistent, say so and persist a user-confirmed correction instead of claiming that prose already changed memory.',
   'Direct writes may only target the active mode. A fact for the other mode must be staged with update_session_memory target_mode; do not place it in the current mode.',
   'After entering a mode, review pending writes targeted there. Use resolve_pending_memory to apply a consolidated update or explicitly skip it; only then is that pending item cleared.',
   'The bridge contains only a short transition note and pending write instructions. Never use it as a second long-term memory. Never invent people or facts.',
@@ -128,6 +130,11 @@ export class SessionMemoryService extends TypertRemoteService {
     this.resolved = { maxTextBytes: config.maxTextBytes ?? 4096, maxItemsPerSection: Math.min(config.maxItemsPerSection ?? MAX_MEMORY_CARDS, MAX_MEMORY_CARDS), maxProfileCharacters: config.maxProfileCharacters ?? DEFAULT_PROFILE_CHARACTERS }
     ctx.systemPrompt.section({ name: 'tool:session-memory', order: 113, text: MEMORY_TOOL_GUIDANCE })
     this.registerTools()
+    ctx.on('agent/pre-step', async ({ messages, step }, next) => {
+      const decision = await next()
+      if (step !== 1 || decision.kind === 'reject' || !needsAssistantStateReminder(messages)) return decision
+      return { kind: 'enter', messages: [...decision.messages, { ...ASSISTANT_STATE_REMINDER, id: `${ASSISTANT_STATE_REMINDER.id}-${randomUUID()}` } as typeof decision.messages[number]] }
+    })
     installSessionCompactionPolicyBridge(ctx, agent => this.store.read(agent.session).compactionPolicy)
     this.requestCompactionCheck = installAutomaticCompactionFallback(ctx, agent => this.store.read(agent.session).compactionPolicy)
     ctx.inject(['systemPrompt'], (promptCtx) => {
@@ -184,6 +191,31 @@ export class SessionMemoryService extends TypertRemoteService {
         return Promise.resolve(modelSessionMemorySnapshot(this.get(exec.agent)) as unknown as JsonValue)
       },
     }))
+    this.ctx.tools.register(defineTool({
+      name: 'get_current_assistant_state', description: 'Read the authoritative current AI appearance, outfit, or active role/state. Call this when the user says the claimed state is not visible, unchanged, or inconsistent.', parameters: {},
+      output: { schema: { type: 'json' }, render: (_args, value) => [{ type: 'text', text: JSON.stringify(value) }] },
+      execute: (_args, exec): Promise<JsonValue> => {
+        if (!exec.agent) throw new Error('get_current_assistant_state requires an Agent-backed session')
+        const document = this.get(exec.agent).document
+        return Promise.resolve({ mode: document.activeMode, state: document[document.activeMode].assistantState } as unknown as JsonValue)
+      },
+    }))
+    this.ctx.tools.register(defineTool({
+      name: 'set_current_assistant_state', description: 'Persist the AI current appearance/outfit or active role/state in the active Chat/Work memory. Required before claiming a confirmed change is now in effect. This is the simple preferred state-write tool.',
+      parameters: { state: { type: 'string', required: true, description: 'The complete resolved current state. Use an empty string only when the user explicitly clears it.' } },
+      output: { schema: { type: 'json' }, render: (_args, value) => [{ type: 'text', text: JSON.stringify(value) }] },
+      execute: async (args, exec): Promise<JsonValue> => {
+        if (!exec.agent) throw new Error('set_current_assistant_state requires an Agent-backed session')
+        const current = this.get(exec.agent).document
+        const sourceSeqs = this.latestEvidence(exec.agent)
+        const request = currentRequest(current)
+        const target = applyMemoryMutation(current[current.activeMode], { action: 'set_assistant_state', assistant_state: args.state }, sourceSeqs)
+        const result = await this.commit(exec.agent, { ...request, [current.activeMode]: target }, sourceSeqs)
+        if (!result.ok) throw new Error(result.error.message)
+        const document = result.value.document
+        return { ok: true, mode: document.activeMode, state: document[document.activeMode].assistantState, revision: document.revision } as unknown as JsonValue
+      },
+    }))
     const mutationParameters = {
       target_mode: { type: 'string', required: true, enum: ['chat', 'work'] }, action: { type: 'string', required: true, enum: ['set_assistant_setting', 'set_assistant_state', 'add_person', 'update_person', 'remove_person', 'upsert_item', 'remove_item'] },
       section: { type: 'string', enum: ['assistantRequirements', 'memories'] }, category: { type: 'string' }, text: { type: 'string' }, item_id: { type: 'string' }, person_id: { type: 'string' }, person_name: { type: 'string' }, information: { type: 'string' }, preference: { type: 'string' }, relationship: { type: 'string' }, assistant_setting: { type: 'string' }, assistant_state: { type: 'string' },
@@ -201,7 +233,7 @@ export class SessionMemoryService extends TypertRemoteService {
           const pending: BridgePendingWrite = { id: `pending-${randomUUID()}`, fromMode: current.activeMode, targetMode: args.target_mode, instruction: mutationInstruction(args), suggestedAction: args.action, ...(args.section ? { suggestedSection: args.section } : {}), sourceSeqs, createdAt: Date.now() }
           next = { ...request, bridge: { ...request.bridge, pendingWrites: [...request.bridge.pendingWrites, pending] } }
         }
-        const result = await this.commit(exec.agent, next, sourceSeqs); if (!result.ok) throw new Error(result.error.message); return result.value as unknown as JsonValue
+        const result = await this.commit(exec.agent, next, sourceSeqs); if (!result.ok) throw new Error(result.error.message); return { ok: true, ...modelSessionMemorySnapshot(result.value), revision: result.value.document.revision } as unknown as JsonValue
       },
     }))
     this.ctx.tools.register(defineTool({
@@ -217,7 +249,7 @@ export class SessionMemoryService extends TypertRemoteService {
         const sourceSeqs = [...new Set([...pending.sourceSeqs, ...this.latestEvidence(exec.agent)])]; const request = currentRequest(view.document)
         const target = args.resolution === 'apply' ? applyMemoryMutation(view.document[pending.targetMode], args, sourceSeqs) : view.document[pending.targetMode]
         const next = { ...request, [pending.targetMode]: target, bridge: { ...request.bridge, pendingWrites: request.bridge.pendingWrites.filter(item => item.id !== pending.id) } }
-        const result = await this.commit(exec.agent, next, sourceSeqs); if (!result.ok) throw new Error(result.error.message); return result.value as unknown as JsonValue
+        const result = await this.commit(exec.agent, next, sourceSeqs); if (!result.ok) throw new Error(result.error.message); return { ok: true, ...modelSessionMemorySnapshot(result.value), revision: result.value.document.revision } as unknown as JsonValue
       },
     }))
     this.ctx.tools.register(defineTool({

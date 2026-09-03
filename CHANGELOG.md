@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.6.8
+
+- Added dedicated compact tools for reading and writing the AI's current state.
+- Added a turn-local reminder for appearance and outfit corrections so the memory duty remains adjacent to the user message.
+- Stopped returning the full audit history from model-facing write tools.
+
 ## 0.6.6
 
 - Turned `get_session_memory` into a compact authoritative model inspection tool: it now returns only the active memory face and bridge instead of replaying the entire audit history into model context.

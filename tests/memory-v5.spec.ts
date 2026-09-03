@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { needsAssistantStateReminder } from '../src/memory/state-reminder.ts'
 import { emptySessionMemory, foldSessionMemory, migrateLegacyDocument, migrateV4Document } from '../src/memory/fold.ts'
 import { modelSessionMemorySnapshot, renderAssistantRequirements, renderBridge, renderSessionMemory, renderSessionMemoryContext } from '../src/memory/render.ts'
 import { applyMemoryMutation } from '../src/memory/mutation.ts'
@@ -27,6 +28,13 @@ describe('V5 task-conditioned memory', () => {
       assistant_state: '白衬衫、黑色包臀裙和丝袜',
     }, [42])
     expect(next.assistantState).toBe('白衬衫、黑色包臀裙和丝袜')
+  })
+
+  it('places a state-write reminder next to appearance corrections but not unrelated chat', () => {
+    const user = (text: string) => ({ content: [{ type: 'text', text }], source: { kind: 'user' }, role: 'user', id: `user-${text}` })
+    expect(needsAssistantStateReminder([user('可以啊，那你换这身')])).toBe(true)
+    expect(needsAssistantStateReminder([user('你的外观没变化')])).toBe(true)
+    expect(needsAssistantStateReminder([user('今天吃什么？')])).toBe(false)
   })
 
   it('gives the model a compact authoritative snapshot without audit history', () => {
