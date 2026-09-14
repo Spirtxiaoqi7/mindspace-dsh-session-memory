@@ -54,6 +54,7 @@ export default defineConfig([
     plugins: [lowerDecorators],
     deps: {
       neverBundle: [
+        /^@deepseek-ai\/dsh-/,
         /^@deepseek-ai\/dsh-compaction(?:\/.*)?$/,
         '@deepseek-ai/dsh-llm',
         /^@deepseek-ai\/dsh-session(?:\/.*)?$/,

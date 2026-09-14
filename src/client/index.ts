@@ -1,8 +1,14 @@
 /** Browser settings contribution with a self-mounted session-memory Remote. */
-import type { ClientContext } from '@deepseek-ai/dsh-client-runtime/client'
+import type { Context as ClientContext } from '@deepseek-ai/cordis'
 import type {} from '@deepseek-ai/dsh-client-ui-settings/client'
 import type {} from '@deepseek-ai/dsh-client-ui-conversation/client'
 import type {} from '@deepseek-ai/dsh-client-locale/client'
+import type {} from '@deepseek-ai/dsh-client-ui-renderer/client'
+import type {} from '@deepseek-ai/dsh-api-session-controller/client'
+import type {} from '@deepseek-ai/dsh-api-workspace-controller/client'
+import type {} from '@deepseek-ai/dsh-api-gateway/client'
+import type {} from '@deepseek-ai/dsh-client-ui-session/client'
+// @ts-expect-error Generated wire descriptors are JavaScript artifacts.
 import sessionMemoryRemote from '../generated/remote.js'
 import { MemoryModeChip, SessionMemorySection } from './SessionMemorySection.tsx'
 import type { SessionMemorySectionInjected } from './SessionMemorySection.tsx'
@@ -30,8 +36,7 @@ export async function apply(ctx: ClientContext): Promise<void> {
     createBlankSession: async (sourceSessionId) => {
       const workspace = ctx.workspaces.list.getSnapshot().items.find(item => item.sessionIds.includes(sourceSessionId as never))
       if (workspace === undefined) throw new Error('当前会话不属于任何工作区，无法创建继承会话。')
-      const targetId = await ctx.workspaces.connectWorkspace(workspace.workspaceId)
-      if (targetId === sourceSessionId) throw new Error('当前会话仍是空白会话，请先发送一条消息后再创建设定继承会话。')
+      const targetId = await ctx.sessions.create({ workspaceId: workspace.workspaceId })
       return targetId
     },
     openSession: (sessionId) => { ctx.sessions.open(sessionId as never) },

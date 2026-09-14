@@ -1,50 +1,74 @@
-# Mindspace Chat / Work Session Memory for DeepSeek Harness
+# Mindspace Memory for DeepSeek Harness
 
-<p align="center">
-  <img src="assets/repository-logo.png" alt="Mindspace Session Memory" width="280">
-</p>
+[中文](README.zh-CN.md) · Community plugin · MIT
 
-An installable DeepSeek Harness community plugin that gives the same user and AI two task-conditioned memory faces:
+**Separate work from everyday conversation. Maintain memory beyond context summaries.**
 
-- **Chat** — daily identity, relationships, preferences, long-term experiences, and the AI's current appearance.
-- **Work** — project identity, collaboration relationships, engineering preferences, project state, and work requirements.
+Chat and Work are two memory contexts for the same user and assistant, not two tool-permission presets. Each stores people, relationships, preferences, assistant identity, current state and lasting experiences.
 
-The selected face changes prompt context and the write destination. It never disables tools or changes permissions. The model may route between faces from the latest intent, while the composer chip lets the user express a strong current preference.
+## What's new in 0.7
 
-## Neutral bridge
+- **Independent maintenance after compaction.** The main model can still write memory, but is no longer solely responsible for remembering. After successful compaction, a separate model call reconciles existing memory against the original conversation captured before summarization.
+- **Updates instead of blind accumulation.** Maintenance adds durable omissions, corrects superseded facts and merges duplicates. Absence from recent conversation is not a deletion reason.
+- **No shortest-card eviction.** Each card section supports up to 100 entries. Exceeding three entries no longer removes the shortest one.
+- **Settings inheritance.** Create a blank session with the current Chat/Work memories, people, identity, bridge and compaction policy, without copying conversation history.
+- **General current state.** Appearance or clothing may be described here, but is not a required dedicated feature.
 
-Cross-domain facts do not write directly into the inactive face. They enter a small neutral bridge containing only:
+## Interaction
 
-1. a transition note of at most 300 characters;
-2. pending cross-domain write instructions.
+Use the composer **Chat / Work** chip to express the current context. The model may also switch when the main intent changes. Modes never disable tools or alter permissions.
 
-After entering the target face, the model reviews each pending item, consolidates it into target memory or skips it, and clears only the resolved item. The bridge is not a third long-term memory.
+In **Settings → Personalization**, inspect/edit memory, inherit it into a new session, change the compaction policy or compact manually.
 
-Model operations are exposed through `route_session_memory`, `get_session_memory`, `update_session_memory`, and `resolve_pending_memory`. The Memory Center uses the same sidecar and Remote rather than maintaining a second implementation.
+Cross-context facts are staged in a neutral bridge: a short transition note (up to 300 characters) plus pending write instructions. Only after entering the target mode does the model merge or dismiss each pending item.
 
-Explicit user-confirmed changes to people, relationships, stable preferences, AI instructions, or the AI's current state are written in the same turn. Current Chat appearance and Work role/state use dedicated one-call actions; ordinary small talk and momentary actions remain outside long-term memory.
+## Maintenance lifecycle
 
-When the user asks about or disputes stored state, the model must inspect the authoritative active-memory snapshot before answering. The inspection tool omits the potentially large audit history, which remains available in the Memory Center.
+Compaction captures the original textual conversation since the last successful compaction. On success, a separate request receives this evidence and current memory, then proposes source-linked operations. Long conversations are processed in ordered batches rather than truncated.
 
-Memory remains session-isolated under `DSH_HOME/mindspace-session-memory/v1` and does not rewrite canonical conversation JSONL. Existing V1–V4 business data migrates into Chat without being copied into Work. Session-scoped context compaction reuses DSH's stock engine and `/compact` command. The Memory Center shows the selected model's effective pressure, trigger line, retained tail, and latest result; policy changes can be applied without saving unrelated memory fields.
+Memory revisions are checked before applying changes. Concurrent edits cause a retry against the latest state; cross-mode changes remain staged. Failed calls preserve memory and task evidence, with up to three attempts per batch. Background maintenance does not block ordinary conversation.
 
-## Install
+This incurs additional model usage after compaction, not after every turn. Empty provider/model settings reuse the session route; a dedicated lower-cost model can be selected. No tools are supplied to the maintenance call. Model judgments can still be corrected in the Memory Center.
+
+## Configuration
+
+Override the installed bundle in your Web profile's `cordis.patch.yml`:
+
+```yaml
+- id: mindspace-session-memory
+  config:
+    maxTextBytes: 4096
+    maxItemsPerSection: 100
+    maxProfileCharacters: 300
+    maintenanceEnabled: true
+    maintenanceProvider: ''
+    maintenanceModel: ''
+    maintenanceMaxTokens: 6000
+```
+
+Restart after configuration changes. Compaction enablement/thresholds are per-session; maintenance configuration is plugin-wide. Successful manual compaction also triggers maintenance.
+
+## Compatibility and migration
+
+Version **0.7 targets DSH 0.1.5-rc.2 and the corresponding 0.1.x APIs**. Keep plugin 0.6.10 on the older 0.1.1 core until upgrading DSH.
+
+Storage remains under `DSH_HOME/mindspace-session-memory/v1`; the directory name is not the document format version. V5 Chat/Work documents remain unchanged. Existing V1–V4 data is read through the migration path into Chat without inventing a Work persona. Legacy memory events can still be imported; new memory writes remain outside canonical session logs.
+
+Maintenance tasks and original evidence live in `DSH_HOME/mindspace-session-memory/maintenance`. These are local user data, not repository artifacts. Back up DSH_HOME before upgrading. DSH handles its own session-format migration; use the matching pre-upgrade backup when rolling back.
+
+## Install from source
 
 ```powershell
 git clone https://github.com/Spirtxiaoqi7/mindspace-dsh-session-memory.git
 Set-Location .\mindspace-dsh-session-memory
 corepack pnpm install
 corepack pnpm run check
-$memoryTgz = (Get-ChildItem .\dist\mindspace-dsh-session-memory-0.6.4.tgz).FullName
-
+$memoryTgz = (Get-Item .\dist\mindspace-dsh-session-memory-0.7.0.tgz).FullName
 Set-Location C:\path\to\deepseek-harness
 corepack pnpm dsh plugin --profile web add $memoryTgz
-corepack pnpm dsh --profile web --dump-config
 corepack pnpm dsh web
 ```
 
-The plugin targets the DeepSeek Harness `0.1.1` compatibility line and owns the `mindspaceSessionMemory` Remote. Do not install it alongside a legacy embedded implementation.
+No DSH core patch is required. Do not load a duplicate legacy implementation alongside this plugin. Manual edits, model writes and maintenance share the same storage and revision path.
 
-Chinese documentation: [README.zh-CN.md](README.zh-CN.md)
-
-License: MIT.
+See [CHANGELOG](CHANGELOG.md). This is not an official DeepSeek project.

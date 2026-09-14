@@ -13,6 +13,9 @@ import type { Agent } from '@deepseek-ai/dsh-agent'
 import type { CompactionResult, CompactionTrigger } from '@deepseek-ai/dsh-compaction'
 import type { LlmCallConfig } from '@deepseek-ai/dsh-llm'
 import type { ContextCompactionPolicy, ContextCompactionStatus } from './types.ts'
+import type { Session, SessionEvent } from '@deepseek-ai/dsh-session'
+type EventReader = (session: Session) => readonly SessionEvent[]
+const legacyEvents: EventReader = session => (session as unknown as { events?: readonly SessionEvent[] }).events ?? []
 
 type Target = Pick<LlmCallConfig, 'provider' | 'model'>
 
@@ -73,6 +76,7 @@ export async function readSessionCompactionStatus(
   agent: Agent,
   policy: ContextCompactionPolicy,
   commandFallbackAvailable = false,
+  eventsFor: EventReader = legacyEvents,
 ): Promise<ContextCompactionStatus> {
   const provider = agent.ctx.get('compaction')
   const target = routedTarget(agent)
@@ -100,14 +104,14 @@ export async function readSessionCompactionStatus(
     : Math.min(policy.retainTokens, Math.floor(contextWindow * safeRetainRatio))
   const utilizationRatio = contextWindow === null ? null : estimatedTokens / contextWindow
 
-  const starts = agent.session.events.filter(event => event.type === 'compaction/start') as ReadonlyArray<{
+  const starts = eventsFor(agent.session).filter(event => event.type === 'compaction/start') as ReadonlyArray<{
     readonly time: number
     readonly data: { readonly compactionId: string; readonly sourceCommandId?: string }
   }>
   const start = starts.at(-1)
   let lastCompaction: ContextCompactionStatus['lastCompaction'] = null
   if (start !== undefined) {
-    const end = agent.session.events.findLast(event => (
+    const end = eventsFor(agent.session).findLast(event => (
       event.type === 'compaction/end'
       && (event as { readonly data: { readonly compactionId: string } }).data.compactionId === start.data.compactionId
     )) as { readonly time: number; readonly data: { readonly error?: string } } | undefined
@@ -148,6 +152,7 @@ export async function readSessionCompactionStatus(
 export function installAutomaticCompactionFallback(
   ctx: Context,
   policyFor: (agent: Agent) => ContextCompactionPolicy,
+  eventsFor: EventReader = legacyEvents,
 ): (agent: Agent) => void {
   const commands = ctx.get('commands') as CommandsRuntime | undefined
   if (commands === undefined) return () => undefined
@@ -156,14 +161,14 @@ export function installAutomaticCompactionFallback(
 
   const check = (agent: Agent, force = false): void => {
     if (running.has(agent)) return
-    const turnEnd = agent.session.events.findLast(event => event.type === 'turn/end')
+    const turnEnd = eventsFor(agent.session).findLast(event => event.type === 'turn/end')
     if (!force && (turnEnd === undefined || checkedTurnEnd.get(agent) === turnEnd.seq)) return
     if (turnEnd !== undefined) checkedTurnEnd.set(agent, turnEnd.seq)
     running.add(agent)
     void (async () => {
       try {
         const policy = policyFor(agent)
-        const status = await readSessionCompactionStatus(agent, policy, true)
+        const status = await readSessionCompactionStatus(agent, policy, true, eventsFor)
         if (status.state !== 'due') return
         const execution = await commands.execute(agent, '/compact', [], new AbortController().signal)
         if (execution !== undefined) {

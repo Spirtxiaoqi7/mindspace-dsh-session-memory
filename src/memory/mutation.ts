@@ -4,7 +4,6 @@ import { randomUUID } from 'node:crypto'
 import type { SessionMemoryItem, SessionModeMemory } from './types.ts'
 
 const MAX_PEOPLE = 5
-const MAX_MEMORY_CARDS = 3
 
 export type MemoryAction = 'set_assistant_setting' | 'set_assistant_state' | 'add_person' | 'update_person' | 'remove_person' | 'upsert_item' | 'remove_item'
 
@@ -27,10 +26,9 @@ function upsertCard(entries: readonly SessionMemoryItem[], args: MutationArgs, s
   if (!args.text?.trim() || !args.category?.trim()) throw new Error('category and text are required')
   const next = [...entries]
   const at = args.item_id ? next.findIndex(item => item.id === args.item_id) : next.findIndex(item => item.category.toLocaleLowerCase() === args.category!.trim().toLocaleLowerCase())
-  const value: SessionMemoryItem = { id: next[at]?.id ?? `memory-${randomUUID()}`, category: args.category.trim(), text: args.text.trim(), source: 'user', evidenceSeqs: [...new Set([...(next[at]?.evidenceSeqs ?? []), ...sourceSeqs])] }
+  const value: SessionMemoryItem = { id: next[at]?.id ?? `memory-${randomUUID()}`, category: args.category.trim(), text: args.text.trim(), source: 'extracted', evidenceSeqs: [...new Set([...(next[at]?.evidenceSeqs ?? []), ...sourceSeqs])] }
   if (at >= 0) next.splice(at, 1, value)
-  else if (next.length < MAX_MEMORY_CARDS) next.push(value)
-  else next.splice(next.reduce((best, item, index) => item.text.length < next[best]!.text.length ? index : best, 0), 1, value)
+  else next.push(value)
   return next
 }
 
@@ -46,14 +44,14 @@ export function applyMemoryMutation(mode: SessionModeMemory, args: MutationArgs,
   if (args.action === 'add_person') {
     if (!args.person_name?.trim()) throw new Error('person_name is required')
     if (mode.people.length >= MAX_PEOPLE) throw new Error(`people already has ${MAX_PEOPLE} entries`)
-    return { ...mode, people: [...mode.people, { id: `person-${randomUUID()}`, name: args.person_name.trim(), information: args.information ?? '', preference: args.preference ?? '', relationship: args.relationship ?? '', source: 'user', evidenceSeqs: [...sourceSeqs], updatedAt: Date.now() }] }
+    return { ...mode, people: [...mode.people, { id: `person-${randomUUID()}`, name: args.person_name.trim(), information: args.information ?? '', preference: args.preference ?? '', relationship: args.relationship ?? '', source: 'extracted', evidenceSeqs: [...sourceSeqs], updatedAt: Date.now() }] }
   }
   if (args.action === 'update_person' || args.action === 'remove_person') {
     if (!args.person_id) throw new Error('person_id is required')
     const people = [...mode.people]; const at = people.findIndex(person => person.id === args.person_id)
     if (at < 0) throw new Error(`person not found: ${args.person_id}`)
     if (args.action === 'remove_person') people.splice(at, 1)
-    else { const old = people[at]!; people.splice(at, 1, { ...old, name: args.person_name ?? old.name, information: args.information ?? old.information, preference: args.preference ?? old.preference, relationship: args.relationship ?? old.relationship, source: 'user', evidenceSeqs: [...new Set([...old.evidenceSeqs, ...sourceSeqs])], updatedAt: Date.now() }) }
+    else { const old = people[at]!; people.splice(at, 1, { ...old, name: args.person_name ?? old.name, information: args.information ?? old.information, preference: args.preference ?? old.preference, relationship: args.relationship ?? old.relationship, source: 'extracted', evidenceSeqs: [...new Set([...old.evidenceSeqs, ...sourceSeqs])], updatedAt: Date.now() }) }
     return { ...mode, people }
   }
   if (!args.section) throw new Error('section is required')

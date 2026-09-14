@@ -7,9 +7,9 @@ const root = resolve(import.meta.dirname, '..')
 describe('installable DSH bundle', () => {
   it('declares one bundle patch and a web client', () => {
     const manifest = JSON.parse(readFileSync(resolve(root, 'package.json'), 'utf8'))
-    expect(manifest.version).toBe('0.6.10')
+    expect(manifest.version).toMatch(/^0\.7\.0(?:-preview\.\d+)?$/)
     for (const [name, range] of Object.entries(manifest.peerDependencies)) {
-      if (name.startsWith('@deepseek-ai/dsh-')) expect(range).toBe('>=0.1.1-rc.2 <0.2.0')
+      if (name.startsWith('@deepseek-ai/dsh-')) expect(range).toBe('>=0.1.5-rc.2 <0.2.0')
     }
     expect(manifest.dsh.bundle.patch).toBe('./cordis.patch.yml')
     expect(manifest.dsh.client.platform).toBe('web')
@@ -40,5 +40,14 @@ describe('installable DSH bundle', () => {
     const clientSource = readFileSync(resolve(root, 'src/client/index.ts'), 'utf8')
     expect(clientSource).toContain("export const inject = ['slots', 'locale', 'remote', 'sessions', 'workspaces']")
     expect(clientSource).toContain('ctx.remote.$mount(sessionMemoryRemote)')
+  })
+
+  it('exports both identity and state updates in the cross-mode bridge protocol', () => {
+    for (const file of ['src/generated/remote.js', 'src/generated/typert.host.js']) {
+      const protocol = readFileSync(resolve(root, file), 'utf8')
+      const declaration = protocol.split('\n').find(line => line.includes("'suggestedAction':"))
+      expect(declaration).toContain('"set_assistant_setting"')
+      expect(declaration).toContain('"set_assistant_state"')
+    }
   })
 })

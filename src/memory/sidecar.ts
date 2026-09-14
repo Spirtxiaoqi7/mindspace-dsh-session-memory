@@ -130,14 +130,15 @@ function legacyMemoryView(events: readonly unknown[]): { readonly view: SessionM
   return { view: { document, memoryActivity: [] }, lastSeq }
 }
 
-function importedView(session: Session): SessionMemoryView {
-  const modern = foldSessionMemory(session.events)
-  const modernSeq = session.events.findLast(event => event.type === 'session-memory/change')?.seq ?? -1
-  const legacy = legacyMemoryView(session.events)
+function importedView(events: readonly import('@deepseek-ai/dsh-session').SessionEvent[]): SessionMemoryView {
+  const modern = foldSessionMemory(events)
+  const modernSeq = events.findLast(event => event.type === 'session-memory/change')?.seq ?? -1
+  const legacy = legacyMemoryView(events)
   return legacy.lastSeq > modernSeq ? legacy.view : modern
 }
 
 export class SessionMemorySidecar {
+  constructor(private readonly eventsFor: (session: Session) => readonly import('@deepseek-ai/dsh-session').SessionEvent[] = session => (session as unknown as { events?: readonly import('@deepseek-ai/dsh-session').SessionEvent[] }).events ?? []) {}
   private readonly root = join(dshHome(), 'mindspace-session-memory', 'v1')
   private readonly cache = new Map<string, StoredSessionMemory>()
 
@@ -168,8 +169,8 @@ export class SessionMemorySidecar {
       }
     }
     const imported: StoredSessionMemory = {
-      format: 5, sessionId: session.id, view: importedView(session),
-      compactionPolicy: foldCompactionPolicy(session.events), writtenAt: Date.now(),
+      format: 5, sessionId: session.id, view: importedView(this.eventsFor(session)),
+      compactionPolicy: foldCompactionPolicy(this.eventsFor(session)), writtenAt: Date.now(),
     }
     this.write(imported)
     return imported

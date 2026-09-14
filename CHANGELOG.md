@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.7.0
+
+- Support the DSH 0.1.5-rc.2 persona-prefix, session projection and browser SessionId APIs.
+- Add independent long-term memory reconciliation after successful native compaction, using pre-compaction conversation evidence rather than the generated summary.
+- Persist maintenance jobs, process long evidence in ordered batches, retry interrupted calls and check memory revisions before committing.
+- Preserve Chat/Work isolation: cross-mode maintenance operations become pending bridge writes.
+- Remove shortest-card eviction and increase the per-section capacity from 3 to 100 entries.
+- Distinguish model-extracted facts from direct user edits; retain evidence references and change records.
+- Replace outfit-specific UI wording with general current state, and remove the automatic outfit reminder injection.
+- Fix blank-session inheritance for the new workspace API. Existing V5 data is preserved; older formats retain the migration path.
+- Document plugin-wide maintenance settings, per-session compaction settings, runtime compatibility and backup/migration behavior.
+
 ## 0.6.10
 
 - Added a one-click **设定继承** action in Memory Center. It saves the current memory, creates a blank conversation in the same workspace, copies both Chat and Work faces plus the neutral bridge and compaction policy, then opens the new conversation without copying chat history.

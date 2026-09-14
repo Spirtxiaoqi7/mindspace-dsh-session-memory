@@ -1,4 +1,4 @@
-# Session-isolated multi-person memory for DeepSeek Harness 0.1.1 Web
+# Session-isolated multi-person memory for DeepSeek Harness 0.1.5 Web
 # profiles. This out-of-tree bundle owns the `mindspaceSessionMemory` Remote
 # namespace and settings entry. It deliberately does not patch or disable any
 # host memory rows: the supported line has no built-in rows with the old experimental ids, and
@@ -14,11 +14,10 @@
       name: mindspace-dsh-session-memory
       config:
         maxTextBytes: 4096
-        maxItemsPerSection: 3
+        maxItemsPerSection: 100
         maxProfileCharacters: 300
-        # DSH 0.1.1 currently has no out-of-tree event-registration surface.
-        # Keep model-directed writes/manual editing only until persistence is
-        # moved fully off the canonical session event log.
-        autoExtract: false
-        autoExtractBelowUtilization: 0.2
-        extractionMaxTokens: 6000
+        # Independent maintenance after successful native compaction.
+        maintenanceEnabled: true
+        maintenanceProvider: ''
+        maintenanceModel: ''
+        maintenanceMaxTokens: 6000

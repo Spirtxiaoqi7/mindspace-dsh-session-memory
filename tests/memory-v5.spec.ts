@@ -16,7 +16,7 @@ describe('V5 task-conditioned memory', () => {
     const text = renderSessionMemoryContext({ document, memoryActivity: [] })
     expect(text).toContain('Chat（日常）')
     expect(text).toContain('不限制任何工具或行为')
-    expect(text).toContain('必须在本轮调用 update_session_memory')
+    expect(text).not.toContain('必须在本轮调用 update_session_memory')
     expect(text).toContain('一起看过海')
     expect(text).not.toContain('喜欢 Python')
   })

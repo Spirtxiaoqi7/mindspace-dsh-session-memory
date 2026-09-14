@@ -1,63 +1,78 @@
-# DeepSeek Harness 的 Mindspace Chat / Work 会话记忆
+# Mindspace Memory：日常与工作分开，记忆持续维护
 
-这是一个可安装的 DeepSeek Harness 社区插件。它把同一个用户、同一个 AI 在不同任务状态下的记忆分成两个面：
+[English](README.md) · DeepSeek Harness 社区插件 · MIT
 
-- **Chat（日常）**：用户信息、AI 设定、双方关系、日常偏好、长期经历，以及 AI 当前衣着与外观。
-- **Work（工作）**：工作身份、AI 工作设定、协作关系、工程偏好、项目状态、长期工作记忆与工作要求。
+同一个人有工作和生活，同一个对话助手也不必把所有经历混在一起。Memory 根据当前情境加载 Chat 或 Work 记忆，同时让长期记忆在上下文压缩后得到独立维护。
 
-模式只决定本轮注入哪组记忆、写回哪个位置，不限制工具和权限。模型可以根据最新意图切换；输入框按钮则让用户直接表达当前偏好。用户选择是强信号，但不会阻止模型在任务性质已经改变时重新判断。
+## 0.7 的变化
 
-## 中立桥接层
+- **Chat / Work**：分开保存人物信息、关系、偏好、AI 自述、当前状态、长期经历和要求。衣着只是当前状态的一种内容，不是必须填写的专门功能。
+- **主动写入 + 后台整理**：保留模型的记忆工具。压缩成功后额外调用一次整理流程，不再只依赖主对话模型主动记忆。
+- **压缩与整理分开**：压缩负责精简近期对话；整理读取已有长期记忆和压缩前的原文证据，增加遗漏、修正过时内容、合并重复。不会因为最近没提到某件事就删掉它。
+- **不再按长度淘汰**：超过三组不再替换最短记忆。每个模式的每个卡片栏目最多 100 组；合并以语义为依据。
+- **设定继承**：点击后创建空白会话，复制两种模式、人物、设定、记忆、桥接和压缩策略，不复制旧聊天记录。后续修改彼此独立。
 
-当前模式发现另一模式的信息时，不会越级写入。它只会放进中立桥的两个槽位：
+## 怎么使用
 
-1. 最多 300 字的转场说明；
-2. 等待目标模式处理的跨域写入说明。
+在输入框用 **Chat / Work** 按钮表达当前情境。模型发现主要意图改变时也可以切换；按钮不是永久锁。模式只改变记忆注入和写入目标，**不限制工具能力或权限**。
 
-进入目标模式后，模型逐条审阅待办：合并到目标记忆或明确跳过；只有完成处理的项目会被清除。桥接层不是第三套长期记忆，也不保存 Chat 或 Work 的详细内容。
+打开 **设置 → 个性化** 可以检查、修改或继承当前会话的记忆，调整自动压缩比例，或者点击“立即压缩当前会话”。
 
-模型通过 `route_session_memory`、`get_session_memory`、`update_session_memory` 和 `resolve_pending_memory` 完成路由、读取、暂存与消费。输入框模式按钮和设置中的记忆中心使用同一套侧车与 Remote，没有另造一套状态。
+跨域信息先进入中立桥：最多 300 字的转场说明，以及待写入目标模式的说明。切换后再由模型审阅、合并或跳过，处理完成才清空。Chat 不直接写入 Work，反之亦然。
 
-用户明确确认的人物、关系、稳定偏好、对 AI 的要求或 AI 当前状态，会在同一轮写入。Chat 当前衣着与 Work 当前角色/状态使用专门的一次调用动作；普通闲聊和瞬时动作不进入长期记忆。
+## 后台整理怎样工作
 
-用户询问或质疑当前存储状态时，模型必须先读取权威的当前模式快照再回答。读取工具不再把可能很大的完整审计历史塞进模型上下文；审计历史仍保留在记忆中心。
+1. DSH 开始压缩时，保存自上次成功压缩以来的原始文字对话，不使用新摘要代替原文。
+2. 压缩成功后，独立调用配置的模型，结合现有记忆提出带来源序号的增删改操作。
+3. 写回前检查记忆修订号；若用户或主模型已经修改，重新基于最新记忆整理。跨域操作仍进入桥接。
+4. 失败保留原有记忆和任务记录，每个批次最多尝试三次。长原文按顺序分批，正常短对话通常只需一次调用；不会截掉早期内容。
+5. 任务和证据保存在本地。主会话可以继续，下一步注入会使用已完成写回的记忆。
 
-数据按会话隔离，保存在 `DSH_HOME/mindspace-session-memory/v1`，不改写 DSH 原始会话 JSONL。V1–V4 的既有业务数据首次读取时完整迁入 Chat，Work 保持空白，避免凭空复制工作身份。会话级上下文压缩复用 DSH 原生压缩器与 `/compact` 命令；记忆中心会显示当前模型的估算用量、实际触发线、实际保留量和最近结果，压缩设置可单独应用。
+整理会产生额外模型费用，不是每轮都调用。默认复用当前会话的 provider/model，也可以指定较便宜的专用模型。整理调用不提供工具，不代替主对话执行任务。用户明确要求不保存的内容不应被纳入长期记忆；模型判断仍可能出错，用户可以在记忆中心纠正。
 
 ## 配置
 
+安装后，在 Web profile 的 `cordis.patch.yml` 中覆盖以下配置：
+
 ```yaml
 - id: mindspace-session-memory
-  name: mindspace-dsh-session-memory
   config:
     maxTextBytes: 4096
-    maxItemsPerSection: 3
+    maxItemsPerSection: 100
     maxProfileCharacters: 300
+    maintenanceEnabled: true
+    maintenanceProvider: ''  # 空值：沿用会话 provider
+    maintenanceModel: ''     # 空值：沿用会话 model
+    maintenanceMaxTokens: 6000
 ```
 
-## 安装
+修改配置后重启 DSH。自动压缩是否开启和阈值是**会话级设置**；后台整理开关是**插件级设置**。关闭自动压缩不删除手动压缩按钮，手动压缩成功也会触发整理。
+
+## 兼容与迁移
+
+**0.7 面向 DSH 0.1.5-rc.2 及相应 0.1.x 接口，不支持直接装入旧的 0.1.1 核心。** 核心较旧时先升级 DSH，或继续使用插件 0.6.10。
+
+数据仍位于 `DSH_HOME/mindspace-session-memory/v1`。目录名不是业务格式版本：
+- 现有 V5 的 Chat / Work 文档保持原样，不重新生成身份。
+- 旧 V1–V4 由现有迁移器读取到新版结构，既有内容进入 Chat，不凭空复制一份到 Work。
+- 旧会话日志中的记忆记录仍可导入；插件的新记忆写入使用侧车文件，不把私有事件塞进 DSH 会话日志。
+- 新增 `DSH_HOME/mindspace-session-memory/maintenance` 保存整理任务、原文证据及错误信息。它属于本地会话数据，不应随插件源码公开。
+
+升级前备份 DSH_HOME。核心会话格式升级由 DSH 自己负责；回退时使用对应版本及升级前备份，不应让旧核心写入新版转换后的日志。
+
+## 安装与开发
 
 ```powershell
 git clone https://github.com/Spirtxiaoqi7/mindspace-dsh-session-memory.git
 Set-Location .\mindspace-dsh-session-memory
 corepack pnpm install
 corepack pnpm run check
-$memoryTgz = (Get-ChildItem .\dist\mindspace-dsh-session-memory-0.6.4.tgz).FullName
-
+$memoryTgz = (Get-Item .\dist\mindspace-dsh-session-memory-0.7.0.tgz).FullName
 Set-Location C:\path\to\deepseek-harness
 corepack pnpm dsh plugin --profile web add $memoryTgz
-corepack pnpm dsh --profile web --dump-config
 corepack pnpm dsh web
 ```
 
-不要在插件目录执行 `pnpm dsh`。插件面向 DeepSeek Harness `0.1.1` 兼容线，独占 `mindspaceSessionMemory` Remote，不应与旧的内嵌实现同时安装。
+插件是独立安装包，无需修改 DSH 核心。不要与同名的旧内嵌记忆实现同时加载。模型写入、后台整理、手动编辑共用同一套存储和修订逻辑。
 
-## 开发
-
-```powershell
-pnpm install
-pnpm run check
-pnpm pack --pack-destination dist
-```
-
-本项目是社区插件，不属于 DeepSeek 官方项目。许可证：MIT。
+详见 [更新记录](CHANGELOG.md)。

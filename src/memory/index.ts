@@ -7,18 +7,20 @@ import type {} from '@deepseek-ai/dsh-typert-registry'
 import z from '@deepseek-ai/schemastery'
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import type { Session } from '@deepseek-ai/dsh-session'
-import { PERSONA_ORDER, PERSONA_SECTION } from '@deepseek-ai/dsh-system-prompt'
+import { PERSONA_PREFIX_SECTION } from '@deepseek-ai/dsh-system-prompt'
+import { installMemoryEventState } from './event-state.ts'
+import { installMaintenance } from './maintenance.ts'
 import type {} from '@deepseek-ai/dsh-session-projection'
 import { defineTool } from '@deepseek-ai/dsh-tools'
-import type { JsonValue } from '@deepseek-ai/dsh-session'
+import type { JsonValue } from '@deepseek-ai/dsh-util-values'
 import { Remote, TypertRemoteService } from '@deepseek-ai/dsh-typert-protocol'
+// @ts-expect-error Generated wire descriptors are JavaScript artifacts.
 import { TYPERT } from '../generated/typert.host.js'
 import { normalizeCompactionPolicy, normalizeSessionMemoryDocument } from './fold.ts'
 import { installAutomaticCompactionFallback, installSessionCompactionPolicyBridge, readSessionCompactionStatus } from './compaction-bridge.ts'
 import { SessionMemorySidecar } from './sidecar.ts'
 import { applyMemoryMutation, mutationInstruction, type MutationArgs } from './mutation.ts'
 import { modelSessionMemorySnapshot, renderAssistantRequirements, renderBridge, renderSessionMemory, renderSessionMemoryContext } from './render.ts'
-import { ASSISTANT_STATE_REMINDER, needsAssistantStateReminder } from './state-reminder.ts'
 import type { BridgePendingWrite, ContextCompactionPolicy, ContextCompactionStatus, ReplaceSessionMemoryRequest, SessionMemoryActivity, SessionMemoryDocument, SessionMemoryFailure, SessionMemoryItem, SessionMemoryMode, SessionMemoryMutationResult, SessionMemorySection, SessionMemoryView, SessionModeMemory, SessionPerson } from './types.ts'
 
 export type * from './types.ts'
@@ -27,21 +29,21 @@ export { needsAssistantStateReminder } from './state-reminder.ts'
 export { applySessionMemoryEvent, emptyModeMemory, emptySessionMemory, emptySessionMemoryFoldState, foldSessionMemory, migrateLegacyDocument, migrateV4Document, sessionMemoryView } from './fold.ts'
 export { renderAssistantRequirements, renderBridge, renderSessionMemory, renderSessionMemoryContext } from './render.ts'
 
-export interface Config { readonly maxTextBytes?: number; readonly maxItemsPerSection?: number; readonly maxProfileCharacters?: number }
+export interface Config { readonly maxTextBytes?: number; readonly maxItemsPerSection?: number; readonly maxProfileCharacters?: number; readonly maintenanceEnabled?: boolean; readonly maintenanceProvider?: string; readonly maintenanceModel?: string; readonly maintenanceMaxTokens?: number }
 interface ResolvedConfig { readonly maxTextBytes: number; readonly maxItemsPerSection: number; readonly maxProfileCharacters: number }
 
 declare module '@deepseek-ai/cordis' { interface Context { mindspaceSessionMemory: SessionMemoryService } }
 
 const MAX_PEOPLE = 5
-const MAX_MEMORY_CARDS = 3
+const MAX_MEMORY_CARDS = 100
 const DEFAULT_PROFILE_CHARACTERS = 300
 
 export const MEMORY_TOOL_GUIDANCE = [
-  'Session memory has two task-conditioned faces for the same user and AI: Chat for daily life, relationships, preferences and appearance; Work for projects, engineering and collaboration.',
+  'Session memory has two task-conditioned faces for the same user and AI: Chat for daily life, relationships, preferences and current state; Work for projects, engineering and collaboration.',
   'These modes never restrict tools or capabilities. At the start of a turn, keep the current mode when it fits; call route_session_memory only when the latest user intent clearly belongs to the other mode.',
   'A user-selected mode is strong evidence, not an absolute lock. A mixed message may switch once its main intent changes. The route tool returns the newly relevant memory and pending bridge writes.',
-  'Memory write duty: when the user explicitly establishes, confirms, corrects, or changes a person, relationship, name, durable preference, instruction for the AI, long-lived fact, or the AI current state, call update_session_memory in that same turn. The user does not need to say "remember". Resolve confirmations such as "this outfit", "keep it this way", or "do this from now on" from the immediately preceding context.',
-  'For the AI current Chat appearance/outfit or current Work role/state, prefer the dedicated get_current_assistant_state and set_current_assistant_state tools. Use update_session_memory set_assistant_setting for the stable AI definition. Do not merely enact a confirmed state in prose: persist it as part of completing the request.',
+  'Use update_session_memory for confirmed durable facts and corrections; resolve references from the conversation. Stable identity belongs in assistant_setting, temporary current state in assistant_state. Do not claim a saved change unless the write succeeded. Respect explicit requests not to save or not to call tools in this turn.',
+  'Independent maintenance also runs after successful compaction to reconcile long-term memory with the original conversation. Continue talking naturally; you do not need to narrate memory administration.',
   'Ordinary small talk, momentary actions, one-off tasks, and unconfirmed guesses are not memory. Direct writes are atomic and do not require a preceding read; use get_session_memory only when the existing state or ids are genuinely needed.',
   'Verification duty: when the user asks what is currently remembered or disputes a general remembered fact, call get_session_memory before answering; for current AI appearance/outfit/state use get_current_assistant_state. Treat tool results as authoritative. If a field is empty or inconsistent, say so and persist a user-confirmed correction instead of claiming that prose already changed memory.',
   'Direct writes may only target the active mode. A fact for the other mode must be staged with update_session_memory target_mode; do not place it in the current mode.',
@@ -118,25 +120,29 @@ function currentRequest(document: SessionMemoryDocument): ReplaceSessionMemoryRe
 }
 
 export class SessionMemoryService extends TypertRemoteService {
-  static inject = ['agents', 'sessions', 'tools', 'systemPrompt', 'typert', 'commands']
-  static Config: z<Config> = z.object({ maxTextBytes: z.number().step(1).min(1).default(4096), maxItemsPerSection: z.number().step(1).min(1).max(MAX_MEMORY_CARDS).default(MAX_MEMORY_CARDS), maxProfileCharacters: z.number().step(1).min(1).default(DEFAULT_PROFILE_CHARACTERS) })
+  static inject = ['agents', 'sessions', 'tools', 'systemPrompt', 'typert', 'commands', 'sessionProjections']
+  static Config: z<Config> = z.object({ maxTextBytes: z.number().step(1).min(1).default(4096), maxItemsPerSection: z.number().step(1).min(1).max(MAX_MEMORY_CARDS).default(MAX_MEMORY_CARDS), maxProfileCharacters: z.number().step(1).min(1).default(DEFAULT_PROFILE_CHARACTERS), maintenanceEnabled: z.boolean().default(true), maintenanceProvider: z.string().default(''), maintenanceModel: z.string().default(''), maintenanceMaxTokens: z.number().step(1).min(256).default(6000) })
   private readonly resolved: ResolvedConfig
   private readonly installedAgents = new WeakSet<Agent>()
-  private readonly store = new SessionMemorySidecar()
+  private readonly store: SessionMemorySidecar
+  private readonly eventsFor: ReturnType<typeof installMemoryEventState>
   private readonly requestCompactionCheck: (agent: Agent) => void
 
   constructor(ctx: Context, config: Config = {}) {
     super(ctx, 'mindspaceSessionMemory'); ctx.typert.register(TYPERT)
+    this.eventsFor = installMemoryEventState(ctx)
+    this.store = new SessionMemorySidecar(this.eventsFor)
     this.resolved = { maxTextBytes: config.maxTextBytes ?? 4096, maxItemsPerSection: Math.min(config.maxItemsPerSection ?? MAX_MEMORY_CARDS, MAX_MEMORY_CARDS), maxProfileCharacters: config.maxProfileCharacters ?? DEFAULT_PROFILE_CHARACTERS }
     ctx.systemPrompt.section({ name: 'tool:session-memory', order: 113, text: MEMORY_TOOL_GUIDANCE })
     this.registerTools()
-    ctx.on('agent/pre-step', async ({ messages, step }, next) => {
-      const decision = await next()
-      if (step !== 1 || decision.kind === 'reject' || !needsAssistantStateReminder(messages)) return decision
-      return { kind: 'enter', messages: [...decision.messages, { ...ASSISTANT_STATE_REMINDER, id: `${ASSISTANT_STATE_REMINDER.id}-${randomUUID()}` } as typeof decision.messages[number]] }
-    })
     installSessionCompactionPolicyBridge(ctx, agent => this.store.read(agent.session).compactionPolicy)
-    this.requestCompactionCheck = installAutomaticCompactionFallback(ctx, agent => this.store.read(agent.session).compactionPolicy)
+    this.requestCompactionCheck = installAutomaticCompactionFallback(ctx, agent => this.store.read(agent.session).compactionPolicy, this.eventsFor)
+    installMaintenance(ctx, { enabled: config.maintenanceEnabled ?? true, provider: config.maintenanceProvider ?? '', model: config.maintenanceModel ?? '', maxTokens: config.maintenanceMaxTokens ?? 6000 }, agent => this.get(agent).document, async (agent, document, reason, seqs) => {
+      const result = await this.commit(agent, currentRequest(document), seqs)
+      if (!result.ok) throw new Error(result.error.message)
+      const view = result.value
+      this.store.replace(agent.session, { ...view, memoryActivity: [...view.memoryActivity, activity('merge', 'memories', document.activeMode, null, null, reason, Date.now(), seqs)] })
+    })
     ctx.inject(['systemPrompt'], (promptCtx) => {
       for (const agent of ctx.agents.roots()) this.installPrompt(agent)
       promptCtx.on('agent/created', ({ agent }) => { if (ctx.agents.roots().includes(agent)) this.installPrompt(agent) })
@@ -147,7 +153,7 @@ export class SessionMemoryService extends TypertRemoteService {
   @Remote('replace') async replace(agent: Agent, request: ReplaceSessionMemoryRequest): Promise<SessionMemoryMutationResult> { return this.commit(agent, request, []) }
   @Remote('getCompactionPolicy') getCompactionPolicy(agent: Agent): ContextCompactionPolicy { this.assertLive(agent); return normalizeCompactionPolicy(this.store.read(agent.session).compactionPolicy) }
   @Remote('getCompactionStatus') async getCompactionStatus(agent: Agent): Promise<ContextCompactionStatus> {
-    this.assertLive(agent); return await readSessionCompactionStatus(agent, this.store.read(agent.session).compactionPolicy, this.ctx.get('commands') !== undefined)
+    this.assertLive(agent); return await readSessionCompactionStatus(agent, this.store.read(agent.session).compactionPolicy, this.ctx.get('commands') !== undefined, this.eventsFor)
   }
   @Remote('setCompactionPolicy') async setCompactionPolicy(agent: Agent, policy: ContextCompactionPolicy): Promise<ContextCompactionPolicy> {
     this.assertLive(agent); const next = { ...normalizeCompactionPolicy(policy), updatedAt: Date.now() }; const saved = this.store.setPolicy(agent.session, next).compactionPolicy; this.requestCompactionCheck(agent); return saved
@@ -165,7 +171,7 @@ export class SessionMemoryService extends TypertRemoteService {
   }
 
   private assertLive(agent: Agent): void { if (this.ctx.agents.get(agent.id) !== agent) throw new Error(`session-memory: agent ${agent.id} is not live`) }
-  private latestEvidence(agent: Agent): number[] { const event = agent.session.events.findLast(row => row.type === 'user/message' && row.data.source.kind === 'user'); return event ? [event.seq] : [] }
+  private latestEvidence(agent: Agent): number[] { const event = this.eventsFor(agent.session).findLast(row => row.type === 'user/message' && row.data.source.kind === 'user'); return event ? [event.seq] : [] }
   private registerTools(): void {
     this.ctx.tools.register(defineTool({
       name: 'route_session_memory', description: 'Switch Chat/Work memory only when the latest intent clearly belongs to the other mode. This does not change tools or permissions. Returns the selected mode memory and pending bridge writes.',
@@ -261,7 +267,7 @@ export class SessionMemoryService extends TypertRemoteService {
 
   private installPrompt(agent: Agent): void {
     if (this.installedAgents.has(agent)) return; this.installedAgents.add(agent)
-    agent.ctx.systemPrompt.section({ name: PERSONA_SECTION, order: PERSONA_ORDER, text: () => renderAssistantRequirements(this.get(agent)) })
+    agent.ctx.systemPrompt.section({ name: PERSONA_PREFIX_SECTION, order: agent.ctx.systemPrompt.getSectionOrder('DEPLOYMENT_PERSONA_PREFIX'), text: () => renderAssistantRequirements(this.get(agent)) })
     agent.ctx.systemPrompt.section({ name: 'session-memory:personalization', order: 10, text: () => renderSessionMemoryContext(this.get(agent)) })
     agent.ctx.systemPrompt.section({ name: 'session-memory:bridge', order: 11, text: () => renderBridge(this.get(agent)) })
   }

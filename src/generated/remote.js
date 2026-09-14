@@ -20,7 +20,7 @@ const _sessionModeMemory$schema = z.object({
 const _pendingWrite$schema = z.object({
   'id': z.string().readonly(), 'fromMode': z.union([z.literal("chat"), z.literal("work")]).readonly(),
   'targetMode': z.union([z.literal("chat"), z.literal("work")]).readonly(), 'instruction': z.string().readonly(),
-  'suggestedAction': z.union([z.literal("add_person"), z.literal("update_person"), z.literal("remove_person"), z.literal("upsert_item"), z.literal("remove_item")]).readonly(),
+  'suggestedAction': z.union([z.literal("set_assistant_setting"), z.literal("set_assistant_state"), z.literal("add_person"), z.literal("update_person"), z.literal("remove_person"), z.literal("upsert_item"), z.literal("remove_item")]).readonly(),
   'suggestedSection': z.union([z.literal("assistantRequirements"), z.literal("memories"), z.undefined()]).readonly(),
   'sourceSeqs': z.array(z.number()).readonly(), 'createdAt': z.number().readonly(),
 }).readonly()
