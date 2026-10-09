@@ -1,5 +1,5 @@
 /** Chat/Work memory editor and composer mode control. */
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import type { SessionId } from '@deepseek-ai/dsh-session/types'
 import type { SessionListState } from '@deepseek-ai/dsh-api-session-controller/client'
 import type { WorkspaceSnapshot } from '@deepseek-ai/dsh-api-workspace-controller/client'
@@ -7,9 +7,9 @@ import type { PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
 import type { ContextCompactionPolicy, ContextCompactionStatus, ReplaceSessionMemoryRequest, SessionMemoryItem, SessionMemoryMode, SessionMemoryMutationResult, SessionMemoryView, SessionModeMemory, SessionPerson } from '../memory/types.ts'
 import type { SessionMemoryKey } from './locales.ts'
 import { visibleSessionIds, visibleSessionSelection } from './visible-sessions.ts'
+import { currentSessionId } from './navigation.ts'
 import css from './SessionMemorySection.module.css'
 
-const DEFAULT_POLICY: ContextCompactionPolicy = { enabled: true, thresholdRatio: 0.164, retainTokens: 64_000, maxTokens: 6_000, updatedAt: 0 }
 type RemoteResult<T> = { readonly ok: true; readonly value: T } | { readonly ok: false; readonly error: { readonly code: string; readonly message: string } }
 export interface SessionMemoryRemote {
   get(agentId: never): Promise<RemoteResult<SessionMemoryView>>
@@ -54,21 +54,37 @@ function ModeEditor({ mode, value, onChange }: { mode: SessionMemoryMode; value:
   </div>
 }
 
-export function MemoryModeChip({ sessionId, remote }: PropsRuntime<'conversation.input.left'> & { remote: SessionMemoryRemote }) {
+export function MemoryModeChip(props: PropsRuntime<'conversation.input.left'> & { remote: SessionMemoryRemote }) {
+  return <MemoryModeChipState key={props.sessionId} {...props}/>
+}
+
+function MemoryModeChipState({ sessionId, remote }: PropsRuntime<'conversation.input.left'> & { remote: SessionMemoryRemote }) {
   const [view, setView] = useState<SessionMemoryView>(); const [busy, setBusy] = useState(false); const [error, setError] = useState('')
   const id = sessionId as never
-  const load = async () => { const result = await remote.get(id); if (result.ok) { setView(result.value); setError('') } else setError(result.error.message) }
+  const [retry, setRetry] = useState(0)
   useEffect(() => {
     let active = true
-    const refresh = async () => { const result = await remote.get(id); if (!active) return; if (result.ok) { setView(result.value); setError('') } else setError(result.error.message) }
+    let refreshing = false
+    const refresh = async () => {
+      if (refreshing) return
+      refreshing = true
+      try {
+        const result = await remote.get(id)
+        if (!active) return
+        if (result.ok) { setView(result.value); setError('') } else setError(result.error.message)
+      } catch (cause) {
+        if (active) setError(cause instanceof Error ? cause.message : String(cause))
+      } finally { refreshing = false }
+    }
     void refresh()
     const timer = window.setInterval(() => void refresh(), 1_500)
     return () => { active = false; window.clearInterval(timer) }
-  }, [sessionId])
-  if (!view) return null
+  }, [sessionId, remote, retry])
+  if (!view) return <button type="button" className={`${css.modeChip} ${error ? css.modeChipError : ''}`} disabled={!error} onClick={() => setRetry(value => value + 1)} title={error || '正在读取会话记忆'}>{error ? '记忆读取失败 · 重试' : '记忆读取中'}</button>
   const mode = view.document.activeMode; const pending = view.document.bridge.pendingWrites.filter(item => item.targetMode === mode).length
   const toggle = async () => {
     setBusy(true); setError('')
+    try {
     const latest = await remote.get(id)
     if (!latest.ok) { setError(latest.error.message); setBusy(false); return }
     const doc = latest.value.document; const target = doc.activeMode === 'chat' ? 'work' : 'chat'
@@ -76,7 +92,8 @@ export function MemoryModeChip({ sessionId, remote }: PropsRuntime<'conversation
     if (result.ok && result.value.ok) setView(result.value.value)
     else if (!result.ok) setError(result.error.message)
     else if (!result.value.ok) setError(result.value.error.message)
-    setBusy(false)
+    } catch (cause) { setError(cause instanceof Error ? cause.message : String(cause)) }
+    finally { setBusy(false) }
   }
   const title = error ? `模式切换失败：${error}` : '切换 Chat / Work；模型仍会根据当前语义判断是否需要调整'
   return <button type="button" className={`${css.modeChip} ${mode === 'work' ? css.modeChipWork : ''} ${error ? css.modeChipError : ''}`} disabled={busy} onClick={() => void toggle()} title={title} aria-label={`${mode === 'chat' ? 'Chat' : 'Work'} 记忆模式${pending ? `，${pending} 条待处理` : ''}`}><span className={css.modeDot}/><strong>{busy ? '切换中' : mode === 'chat' ? 'Chat' : 'Work'}</strong>{pending > 0 && <span className={css.pendingBadge}>{pending}</span>}</button>
@@ -88,13 +105,42 @@ export function SessionMemorySection({ useSessions, useWorkspaces, remote, comma
   if (!remote || !t) return null
   const sessions: SessionListState = useSessions((state: SessionListState) => state)
   const workspaces: WorkspaceSnapshot = useWorkspaces((state: WorkspaceSnapshot) => state)
-  const [selectedId, setSelectedId] = useState<string | undefined>(sessions.current ?? sessions.ids[0]); const [view, setView] = useState<SessionMemoryView>(); const [draft, setDraft] = useState<Draft>(); const [compaction, setCompaction] = useState<ContextCompactionStatus>(); const [tab, setTab] = useState<SessionMemoryMode>('chat'); const [status, setStatus] = useState(''); const [inheriting, setInheriting] = useState(false)
+  const current = currentSessionId(sessions)
+  const [selectedId, setSelectedId] = useState<string | undefined>()
   const visible = useMemo(() => visibleSessionIds(sessions.ids, workspaces.items.flatMap(row => row.sessionIds), workspaces.archivedSessionIds, workspaces.phase === 'ready'), [sessions.ids, workspaces.items, workspaces.archivedSessionIds, workspaces.phase])
-  const selected = visibleSessionSelection(selectedId, sessions.current, visible); const options = visible.map(id => sessions.byId[id as SessionId]).filter(Boolean)
-  const loadCompaction = async () => { if (!selected) return; const result = await remote.getCompactionStatus(selected as never); if (result.ok) setCompaction(result.value) }
-  const load = async () => { if (!selected) return; setStatus('正在读取…'); const result = await remote.get(selected as never); if (!result.ok) { setStatus(result.error.message); return } let policy = DEFAULT_POLICY; const p = await remote.getCompactionPolicy(selected as never); if (p.ok) policy = p.value; const doc = result.value.document; setView(result.value); setDraft({ ...doc, expectedRevision: doc.revision, policy }); setTab(doc.activeMode); await loadCompaction(); setStatus('') }
-  useEffect(() => { void load() }, [selected])
+  const selected = visibleSessionSelection(selectedId, current, visible); const options = visible.map(id => sessions.byId[id as SessionId]).filter(Boolean)
   if (workspaces.phase !== 'ready') return <div className={css.section}>正在读取会话…</div>
+  return <SessionMemoryEditor key={selected} selected={selected} options={options} setSelectedId={setSelectedId} remote={remote} commands={commands} inheritance={inheritance} t={t}/>
+}
+
+// Each session owns its editor state. Late responses from a previous session
+// can only update its unmounted editor, never another session's draft.
+function SessionMemoryEditor({ selected, options, setSelectedId, remote, commands, inheritance }: SessionMemorySectionInjected & {
+  selected: string | undefined
+  options: readonly (SessionListState['byId'][SessionId] | undefined)[]
+  setSelectedId: (id: string) => void
+}) {
+  const [view, setView] = useState<SessionMemoryView>(); const [draft, setDraft] = useState<Draft>(); const [compaction, setCompaction] = useState<ContextCompactionStatus>(); const [tab, setTab] = useState<SessionMemoryMode>('chat'); const [status, setStatus] = useState(''); const [inheriting, setInheriting] = useState(false)
+  const loadVersion = useRef(0)
+  const loadCompaction = async () => { if (!selected) return; const result = await remote.getCompactionStatus(selected as never); if (result.ok) setCompaction(result.value) }
+  const load = async () => {
+    if (!selected) return
+    const version = ++loadVersion.current
+    setStatus('正在读取…')
+    try {
+      const [result, policy, pressure] = await Promise.all([remote.get(selected as never), remote.getCompactionPolicy(selected as never), remote.getCompactionStatus(selected as never)])
+      if (version !== loadVersion.current) return
+      if (!result.ok) throw new Error(result.error.message)
+      if (!policy.ok) throw new Error(policy.error.message)
+      const doc = result.value.document
+      setView(result.value); setDraft({ ...doc, expectedRevision: doc.revision, policy: policy.value }); setTab(doc.activeMode)
+      setCompaction(pressure.ok ? pressure.value : undefined)
+      setStatus(pressure.ok ? '' : pressure.error.message)
+    } catch (cause) {
+      if (version === loadVersion.current) setStatus(cause instanceof Error ? cause.message : String(cause))
+    }
+  }
+  useEffect(() => { void load(); return () => { loadVersion.current++ } }, [selected, remote])
   const applyPolicy = async () => { if (!draft || !selected) return; setStatus('正在应用压缩设置…'); const result = await remote.setCompactionPolicy(selected as never, draft.policy); if (!result.ok) { setStatus(result.error.message); return } setDraft({ ...draft, policy: result.value }); await loadCompaction(); setStatus('压缩设置已应用') }
   const save = async () => { if (!draft || !selected) return; setStatus('正在保存…'); const result = await remote.replace(selected as never, request(draft)); if (!result.ok) { setStatus(result.error.message); return } if (!result.value.ok) { setStatus(result.value.error.message); return } const policy = await remote.setCompactionPolicy(selected as never, draft.policy); if (!policy.ok) { setStatus(`记忆已保存；压缩设置失败：${policy.error.message}`); return } setView(result.value.value); setDraft({ ...draft, expectedRevision: result.value.value.document.revision, policy: policy.value }); await loadCompaction(); setStatus('已保存') }
   const inheritSettings = async () => {
@@ -133,6 +179,7 @@ export function SessionMemorySection({ useSessions, useWorkspaces, remote, comma
     }
   }
   return <div className={css.section}><header><h2>记忆中心</h2><p>同一个人、同一个 AI，按当前任务载入 Chat 或 Work。模式不限制工具，只隔离记忆与写入目标。</p></header><label className={css.sessionSelect}><span>会话</span><select value={selected} onChange={event => { setSelectedId(event.target.value); setView(undefined); setDraft(undefined) }}>{options.map(row => <option key={row!.id} value={row!.id}>{row!.displayTitle}</option>)}</select></label>
+    {!draft && <div className={css.emptyState} role="status">{selected ? status || '正在读取…' : '当前没有可编辑的会话。'}{selected && <button type="button" onClick={() => void load()}>重新载入</button>}</div>}
     {draft && <><div className={css.modeTabs}><button className={tab === 'chat' ? css.activeTab : ''} onClick={() => setTab('chat')}>Chat</button><button className={tab === 'work' ? css.activeTab : ''} onClick={() => setTab('work')}>Work</button><span>当前注入：{draft.activeMode === 'chat' ? 'Chat' : 'Work'} · {draft.modeSource === 'model' ? '模型判断' : draft.modeSource === 'user' ? '用户选择' : '迁移默认'}</span></div><ModeEditor mode={tab} value={draft[tab]} onChange={value => setDraft({ ...draft, [tab]: value })}/>
       <section className={css.card}><div className={css.cardTitle}><div><h3>中立桥接层</h3><p>只保存转场说明和跨域待写项，不保存两边的详细记忆。</p></div><span className={css.limitBadge}>{draft.bridge.pendingWrites.length} 待处理</span></div><label><span>转场说明（最多 300 字）</span><textarea rows={3} value={draft.bridge.transitionNote} onChange={event => setDraft({ ...draft, bridge: { ...draft.bridge, transitionNote: [...event.target.value].slice(0, 300).join('') } })}/></label>{draft.bridge.pendingWrites.map(row => <div className={css.pendingRow} key={row.id}><strong>{row.fromMode} → {row.targetMode}</strong><span>{row.instruction}</span></div>)}</section>
       <section className={css.card} data-context-compaction><div className={css.cardTitle}><div><h3>上下文压缩</h3><p>压缩精简较早对话；成功后另行整理长期记忆，修正过时内容并补回遗漏。整理不会代替对话摘要。</p></div><label className={css.switch}><input type="checkbox" checked={draft.policy.enabled} onChange={event => setDraft({ ...draft, policy: { ...draft.policy, enabled: event.target.checked } })}/><span>{draft.policy.enabled ? '自动已启用' : '自动已关闭'}</span></label></div>

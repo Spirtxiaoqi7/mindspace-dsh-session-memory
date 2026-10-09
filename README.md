@@ -50,7 +50,7 @@ Restart after configuration changes. Compaction enablement/thresholds are per-se
 
 ## Compatibility and migration
 
-Version **0.7 targets DSH 0.1.5-rc.2 and the corresponding 0.1.x APIs**. Keep plugin 0.6.10 on the older 0.1.1 core until upgrading DSH.
+Version **0.7.1 verifies the communication interfaces against DSH 0.1.5-rc.2 and desktop 0.2.0-rc.2**, with a declared range of `>=0.1.5-rc.2 <0.3.0`. Keep plugin 0.6.10 on the older 0.1.1 core until upgrading DSH. Plugin 0.7.0 lacks the strict Typert `codec.create()` factories required by DSH 0.2, preventing both Personalization and the mode chip from appearing.
 
 Storage remains under `DSH_HOME/mindspace-session-memory/v1`; the directory name is not the document format version. V5 Chat/Work documents remain unchanged. Existing V1–V4 data is read through the migration path into Chat without inventing a Work persona. Legacy memory events can still be imported; new memory writes remain outside canonical session logs.
 
@@ -63,7 +63,7 @@ git clone https://github.com/Spirtxiaoqi7/mindspace-dsh-session-memory.git
 Set-Location .\mindspace-dsh-session-memory
 corepack pnpm install
 corepack pnpm run check
-$memoryTgz = (Get-Item .\dist\mindspace-dsh-session-memory-0.7.0.tgz).FullName
+$memoryTgz = (Get-Item .\dist\mindspace-dsh-session-memory-0.7.1.tgz).FullName
 Set-Location C:\path\to\deepseek-harness
 corepack pnpm dsh plugin --profile web add $memoryTgz
 corepack pnpm dsh web

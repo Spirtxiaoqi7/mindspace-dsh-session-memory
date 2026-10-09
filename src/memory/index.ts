@@ -7,7 +7,8 @@ import type {} from '@deepseek-ai/dsh-typert-registry'
 import z from '@deepseek-ai/schemastery'
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import type { Session } from '@deepseek-ai/dsh-session'
-import { PERSONA_PREFIX_SECTION } from '@deepseek-ai/dsh-system-prompt'
+import type {} from '@deepseek-ai/dsh-system-prompt'
+import { installMemoryPrompt } from './prompt.ts'
 import { installMemoryEventState } from './event-state.ts'
 import { installMaintenance } from './maintenance.ts'
 import type {} from '@deepseek-ai/dsh-session-projection'
@@ -121,7 +122,7 @@ function currentRequest(document: SessionMemoryDocument): ReplaceSessionMemoryRe
 
 export class SessionMemoryService extends TypertRemoteService {
   static inject = ['agents', 'sessions', 'tools', 'systemPrompt', 'typert', 'commands', 'sessionProjections']
-  static Config: z<Config> = z.object({ maxTextBytes: z.number().step(1).min(1).default(4096), maxItemsPerSection: z.number().step(1).min(1).max(MAX_MEMORY_CARDS).default(MAX_MEMORY_CARDS), maxProfileCharacters: z.number().step(1).min(1).default(DEFAULT_PROFILE_CHARACTERS), maintenanceEnabled: z.boolean().default(true), maintenanceProvider: z.string().default(''), maintenanceModel: z.string().default(''), maintenanceMaxTokens: z.number().step(1).min(256).default(6000) })
+  static Config = z.object({ maxTextBytes: z.number().step(1).min(1).default(4096), maxItemsPerSection: z.number().step(1).min(1).max(MAX_MEMORY_CARDS).default(MAX_MEMORY_CARDS), maxProfileCharacters: z.number().step(1).min(1).default(DEFAULT_PROFILE_CHARACTERS), maintenanceEnabled: z.boolean().default(true), maintenanceProvider: z.string().default(''), maintenanceModel: z.string().default(''), maintenanceMaxTokens: z.number().step(1).min(256).default(6000) })
   private readonly resolved: ResolvedConfig
   private readonly installedAgents = new WeakSet<Agent>()
   private readonly store: SessionMemorySidecar
@@ -267,9 +268,7 @@ export class SessionMemoryService extends TypertRemoteService {
 
   private installPrompt(agent: Agent): void {
     if (this.installedAgents.has(agent)) return; this.installedAgents.add(agent)
-    agent.ctx.systemPrompt.section({ name: PERSONA_PREFIX_SECTION, order: agent.ctx.systemPrompt.getSectionOrder('DEPLOYMENT_PERSONA_PREFIX'), text: () => renderAssistantRequirements(this.get(agent)) })
-    agent.ctx.systemPrompt.section({ name: 'session-memory:personalization', order: 10, text: () => renderSessionMemoryContext(this.get(agent)) })
-    agent.ctx.systemPrompt.section({ name: 'session-memory:bridge', order: 11, text: () => renderBridge(this.get(agent)) })
+    installMemoryPrompt(agent.ctx, () => this.get(agent))
   }
 }
 

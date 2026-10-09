@@ -8,11 +8,13 @@ import type {} from '@deepseek-ai/dsh-api-session-controller/client'
 import type {} from '@deepseek-ai/dsh-api-workspace-controller/client'
 import type {} from '@deepseek-ai/dsh-api-gateway/client'
 import type {} from '@deepseek-ai/dsh-client-ui-session/client'
+import type {} from '@deepseek-ai/dsh-client-ui-workspace/client'
 // @ts-expect-error Generated wire descriptors are JavaScript artifacts.
 import sessionMemoryRemote from '../generated/remote.js'
 import { MemoryModeChip, SessionMemorySection } from './SessionMemorySection.tsx'
 import type { SessionMemorySectionInjected } from './SessionMemorySection.tsx'
 import { en, zh, type SessionMemoryKey } from './locales.ts'
+import { openMemorySession } from './navigation.ts'
 
 declare module '@deepseek-ai/dsh-client-ui-slots' {
   interface LocaleNamespaceMap { 'settings.sessionMemory': SessionMemoryKey }
@@ -39,7 +41,7 @@ export async function apply(ctx: ClientContext): Promise<void> {
       const targetId = await ctx.sessions.create({ workspaceId: workspace.workspaceId })
       return targetId
     },
-    openSession: (sessionId) => { ctx.sessions.open(sessionId as never) },
+    openSession: (sessionId) => openMemorySession(sessionId, ctx.get('uiWorkspace'), ctx.sessions as typeof ctx.sessions & { open?: (id: never) => void }),
   }
   ctx.slots.inject('settings.section', () => ctx.slots.register({
     name: 'settings.section', id: 'personalization', order: 20, label: () => t('nav'),

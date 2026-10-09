@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.7.1
+
+- Restore the Personalization settings page and Chat/Work chip on DSH 0.2.0-rc.2: strict Typert codecs now expose `create()` factories while retaining the 0.1 schema member.
+- Update browser service dependencies and support workspace-owned session navigation and main-view selection on DSH 0.2.
+- Use a supported message source for background maintenance instructions.
+- Give memory requirements their own prompt section instead of shadowing the official persona prefix, including when the memory requirements are empty.
+- Preserve unreadable memory files instead of replacing the only saved copy with an empty conversation fold; isolate corrupt maintenance jobs without blocking valid jobs.
+- Show initial memory loading failures with retry controls, prevent overlapping composer polling, and isolate editor state when switching sessions.
+- Refuse to substitute a default compaction policy after a failed read.
+- Add real DSH 0.1.5-rc.2/0.2.0-rc.2 registry tests and UI/data recovery regression coverage.
+
 ## 0.7.0
 
 - Support the DSH 0.1.5-rc.2 persona-prefix, session projection and browser SessionId APIs.

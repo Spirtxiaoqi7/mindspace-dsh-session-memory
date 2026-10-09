@@ -82,5 +82,10 @@ for (const file of files) {
     const modelStart = next.indexOf('\n  model: {')
     if (modelStart >= 0) next = `${next.slice(0, modelStart)}\n}\n`
   }
+  // DSH 0.2 materializes strict codecs through factories. Keep the schema
+  // member too, so the same descriptors still work on the supported 0.1 line.
+  // Normalize existing pairs as well, making repeated builds idempotent.
+  next = next.replace(/\bschema:\s*([A-Za-z0-9_$]+\$schema)(?:, create: \(\) => \1)?\b/g,
+    (_match, symbol) => `schema: ${symbol}, create: () => ${symbol}`)
   await writeFile(new URL(`../${file}`, import.meta.url), next)
 }

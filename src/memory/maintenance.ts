@@ -22,7 +22,30 @@ const operation = z.object({
 })
 export const maintenanceOutput = z.object({ operations: z.array(operation).max(24) })
 type Entry = { seq: number; role: string; text: string }
-type Job = { id: string; sessionId: string; entries: Entry[]; batchIndex?: number; state: 'captured' | 'pending' | 'running' | 'done' | 'failed'; attempts: number; error: string; createdAt: number; updatedAt: number }
+const jobSchema = z.object({
+  id: z.string().min(1), sessionId: z.string().min(1),
+  entries: z.array(z.object({ seq: z.number().int(), role: z.string(), text: z.string() })),
+  batchIndex: z.number().int().nonnegative().optional(),
+  state: z.enum(['captured', 'pending', 'running', 'done', 'failed']),
+  attempts: z.number().int().nonnegative(), error: z.string(), createdAt: z.number(), updatedAt: z.number(),
+})
+type Job = z.infer<typeof jobSchema>
+const sessionPrefix = (id: string) => createHash('sha256').update(id).digest('hex')
+
+/** One corrupt job must not block the rest of a session's captured evidence. */
+export function readMaintenanceJobs(root: string, sessionId: string): Job[] {
+  if (!existsSync(root)) return []
+  const jobs: Job[] = []
+  for (const file of readdirSync(root).filter(name => name.startsWith(`${sessionPrefix(sessionId)}-`) && name.endsWith('.json'))) {
+    const path = join(root, file)
+    try {
+      const job = jobSchema.parse(JSON.parse(readFileSync(path, 'utf8')))
+      if (job.sessionId !== sessionId) throw new Error('Maintenance job belongs to another session')
+      jobs.push(job)
+    } catch (error) { console.warn('[session-memory] unreadable maintenance job preserved:', path, error instanceof Error ? error.message : String(error)) }
+  }
+  return jobs
+}
 export interface MaintenanceConfig { enabled: boolean; provider: string; model: string; maxTokens: number }
 
 /** Bound individual calls without discarding older evidence. Seq stays tied to the source event. */
@@ -85,20 +108,19 @@ export function installMaintenance(ctx: Context, config: MaintenanceConfig, read
     for (const timer of timers) clearTimeout(timer)
     for (const controller of controllers) controller.abort()
   }, 'memory-maintenance: stop background work on unload')
-  const prefix = (id: string) => createHash('sha256').update(id).digest('hex')
+  const prefix = sessionPrefix
   const path = (job: Job) => join(root, `${prefix(job.sessionId)}-${prefix(job.id)}.json`)
   const save = (job: Job) => { mkdirSync(root, { recursive: true }); job.updatedAt = Date.now(); const tmp = `${path(job)}.${randomUUID()}.tmp`; writeFileSync(tmp, JSON.stringify(job), 'utf8'); renameSync(tmp, path(job)); jobs.set(job.id, job) }
   const loaded = new Set<string>()
   const load = (sessionId: string, compactionId?: string): Job | undefined => {
     if (!loaded.has(sessionId)) {
-      if (existsSync(root)) for (const file of readdirSync(root).filter(name => name.startsWith(prefix(sessionId)) && name.endsWith('.json'))) {
-        const value = JSON.parse(readFileSync(join(root, file), 'utf8')) as Job
+      for (const value of readMaintenanceJobs(root, sessionId)) {
         if (value.state === 'running') value.state = 'pending'
         jobs.set(value.id, value)
       }
       loaded.add(sessionId)
     }
-    if (compactionId) return jobs.get(compactionId)
+    if (compactionId) { const job = jobs.get(compactionId); return job?.sessionId === sessionId ? job : undefined }
     return [...jobs.values()].filter(job => job.sessionId === sessionId && ['pending', 'failed'].includes(job.state) && job.attempts < 3).sort((a,b) => a.createdAt - b.createdAt)[0]
   }
   const run = async (agent: Agent) => {
@@ -121,7 +143,7 @@ export function installMaintenance(ctx: Context, config: MaintenanceConfig, read
       if (!provider || !model) throw new Error('No model configured for memory maintenance')
       const assembler = new BlockAssembler()
       for await (const chunk of agent.ctx.llm.stream({ provider, model, maxTokens: config.maxTokens, sessionId: agent.session.id, signal: AbortSignal.any([controller.signal, AbortSignal.timeout(180_000)]),
-        messages: [createUserMessage({ content: [{ type: 'text', text: `${MAINTENANCE_INSTRUCTION}\n${JSON.stringify({ memory: before, precedingContext, evidence, batch: batchIndex + 1, totalBatches: batches.length })}` }], source: { kind: 'plugin', plugin: 'mindspace-session-memory' } })],
+        messages: [createUserMessage({ content: [{ type: 'text', text: `${MAINTENANCE_INSTRUCTION}\n${JSON.stringify({ memory: before, precedingContext, evidence, batch: batchIndex + 1, totalBatches: batches.length })}` }], source: { kind: 'system-prompt' } })],
       })) assembler.push(chunk)
       const text = assembler.blocks().filter(block => block.type === 'text').map(block => block.text).join('')
       const parsed = maintenanceOutput.parse(JSON.parse(text.replace(/^\s*```(?:json)?\s*/u, '').replace(/\s*```\s*$/u, '')))

@@ -1,4 +1,5 @@
-import { mkdtemp, rm } from 'node:fs/promises'
+import { mkdtemp, rm, mkdir, writeFile, readFile } from 'node:fs/promises'
+import { createHash } from 'node:crypto'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -14,6 +15,21 @@ afterEach(async () => {
 })
 
 describe('SessionMemorySidecar', () => {
+  it.each(['{truncated', JSON.stringify({ format: 99, sessionId: 'broken' }), JSON.stringify({ format: 5, sessionId: 'broken', view: {}, compactionPolicy: {} })])('preserves unreadable memory instead of overwriting it with empty history (%s)', async contents => {
+    const home = await mkdtemp(join(tmpdir(), 'mindspace-memory-sidecar-'))
+    homes.push(home)
+    process.env.DSH_HOME = home
+    const root = join(home, 'mindspace-session-memory', 'v1')
+    await mkdir(root, { recursive: true })
+    const file = join(root, `${createHash('sha256').update('broken').digest('hex')}.json`)
+    await writeFile(file, contents)
+    const store = new SessionMemorySidecar()
+    const session = { id: 'broken', events: [] } as never
+    expect(() => store.read(session)).toThrow('原文件已保留')
+    expect(() => store.replace(session, { document: {} as never, memoryActivity: [] })).toThrow('原文件已保留')
+    expect(await readFile(file, 'utf8')).toBe(contents)
+  })
+
   it('persists memory outside the canonical session event log', async () => {
     const home = await mkdtemp(join(tmpdir(), 'mindspace-memory-sidecar-'))
     homes.push(home)

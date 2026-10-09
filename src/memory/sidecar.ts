@@ -55,8 +55,11 @@ function sessionFilename(id: string): string { return `${createHash('sha256').up
 function storedBase(value: unknown, sessionId: string, format: number): value is Record<string, unknown> {
   if (value === null || typeof value !== 'object') return false
   const row = value as Record<string, unknown>
+  const view = row['view'] as Record<string, unknown> | null | undefined
   return row['format'] === format && row['sessionId'] === sessionId
-    && row['view'] !== null && typeof row['view'] === 'object'
+    && view !== null && typeof view === 'object'
+    && view['document'] !== null && typeof view['document'] === 'object'
+    && Array.isArray(view['memoryActivity'])
     && row['compactionPolicy'] !== null && typeof row['compactionPolicy'] === 'object'
 }
 
@@ -164,8 +167,11 @@ export class SessionMemorySidecar {
           this.write(migrated)
           return migrated
         }
-      } catch {
-        // A valid conversation fold below can still restore visible state.
+        throw new Error('Unsupported memory format or mismatched session')
+      } catch (error) {
+        // The sidecar can be the only remaining copy after conversation
+        // compaction. Never replace an unreadable file with an empty fold.
+        throw new Error(`无法读取记忆文件，原文件已保留：${path}`, { cause: error })
       }
     }
     const imported: StoredSessionMemory = {
